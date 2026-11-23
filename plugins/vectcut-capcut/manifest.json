@@ -1,0 +1,110 @@
+{
+  "id": "vectcut-capcut",
+  "name": "CapCut / VectCutAPI",
+  "version": "0.1.0",
+  "description": "Genera borradores de CapCut mediante VectCutAPI. La estructura interna de los borradores no se asume estable: cada capacidad se validará con una operación real antes de declararla disponible.",
+  "category": "Borradores editables",
+  "connection_type": "mcp-http",
+  "mcp_command_or_endpoint": "${VECTCUT_ENDPOINT|http://127.0.0.1:9000}",
+  "icon": "CC",
+  "accent": "#8b5cf6",
+  "optional": false,
+  "documentation_url": "https://github.com/sun-guannan/VectCutAPI",
+  "install_status": "not_installed",
+  "requirements": [
+    {
+      "id": "vectcut-endpoint",
+      "label": "Servicio VectCutAPI accesible",
+      "kind": "endpoint",
+      "identifier": "${VECTCUT_ENDPOINT|http://127.0.0.1:9000}",
+      "optional": false,
+      "check_id": "vectcut-endpoint",
+      "notes": "El diagnóstico hace una petición HTTP real al endpoint configurado."
+    },
+    {
+      "id": "capcut-desktop",
+      "label": "CapCut de escritorio",
+      "kind": "software",
+      "identifier": "%LOCALAPPDATA%\\CapCut",
+      "optional": true,
+      "check_id": "capcut-installed",
+      "notes": "Necesario para abrir y revisar los borradores generados."
+    }
+  ],
+  "permissions": [
+    {
+      "id": "network-localhost",
+      "label": "Conectar con un servicio local",
+      "description": "Habla con VectCutAPI en tu máquina (por defecto 127.0.0.1:9000).",
+      "risk": "medium",
+      "requires_confirmation": true
+    },
+    {
+      "id": "write-drafts",
+      "label": "Crear borradores en disco",
+      "description": "Escribe proyectos de borrador en el directorio de trabajo permitido.",
+      "risk": "medium",
+      "requires_confirmation": true
+    },
+    {
+      "id": "execute-local-api",
+      "label": "Ejecutar la API local de VectCutAPI",
+      "description": "Podrá arrancar el servicio si está configurado para ello; nunca descarga código sin avisar.",
+      "risk": "medium",
+      "requires_confirmation": true
+    }
+  ],
+  "tools": [
+    { "name": "create_draft", "description": "Crea un borrador de proyecto compatible con CapCut.", "destructive": false },
+    { "name": "add_text", "description": "Añade textos con estilo al borrador.", "destructive": false },
+    { "name": "add_subtitle", "description": "Añade subtítulos al borrador.", "destructive": false },
+    { "name": "add_audio", "description": "Añade pistas de audio.", "destructive": false },
+    { "name": "add_track", "description": "Añade pistas de vídeo o audio.", "destructive": false },
+    { "name": "add_effect", "description": "Aplica efectos cuando la API lo soporte.", "destructive": false },
+    { "name": "add_animation", "description": "Aplica animaciones cuando la API lo soporte.", "destructive": false },
+    { "name": "save_draft", "description": "Guarda el borrador en la ruta de proyectos de CapCut.", "destructive": false }
+  ],
+  "capabilities": [
+    { "id": "draft.create", "label": "Crear borrador", "description": "Borrador nuevo listo para editar en CapCut.", "status": "declared" },
+    { "id": "text.add", "label": "Textos", "description": "Texto con estilo en el borrador.", "status": "declared" },
+    { "id": "subtitle.add", "label": "Subtítulos", "description": "Pistas de subtítulos.", "status": "declared" },
+    { "id": "audio.add", "label": "Audio", "description": "Música y locución.", "status": "declared" },
+    { "id": "track.add", "label": "Pistas", "description": "Pistas múltiples de vídeo y audio.", "status": "declared" },
+    { "id": "effect.add", "label": "Efectos", "description": "Sujeto a lo que exponga VectCutAPI.", "status": "declared" },
+    { "id": "animation.add", "label": "Animaciones", "description": "Sujeto a lo que exponga VectCutAPI.", "status": "declared" },
+    { "id": "draft.export_capcut", "label": "Compatibilidad CapCut", "description": "Apertura del borrador en CapCut de escritorio.", "status": "declared" }
+  ],
+  "known_costs": {
+    "pricing": "free",
+    "currency": null,
+    "notes": "VectCutAPI es local y sin coste; CapCut puede requerir cuenta para funciones concretas.",
+    "limits": "La API puede cambiar entre versiones; no se asume compatibilidad total de los borradores."
+  },
+  "diagnostics": [
+    {
+      "id": "vectcut-env",
+      "label": "Endpoint configurado por variable de entorno",
+      "kind": "env",
+      "target": "VECTCUT_ENDPOINT",
+      "optional": true,
+      "hint": "Opcional. Sin variable se usa http://127.0.0.1:9000."
+    },
+    {
+      "id": "vectcut-endpoint",
+      "label": "VectCutAPI responde",
+      "kind": "http",
+      "target": "${VECTCUT_ENDPOINT|http://127.0.0.1:9000}",
+      "optional": false,
+      "timeout_seconds": 4,
+      "hint": "Arranca VectCutAPI (capcut_server) y define VECTCUT_ENDPOINT si usas otro puerto."
+    },
+    {
+      "id": "capcut-installed",
+      "label": "Instalación de CapCut detectada",
+      "kind": "file",
+      "target": "%LOCALAPPDATA%\\CapCut\\Apps;%LOCALAPPDATA%\\CapCut;%PROGRAMFILES%\\CapCut\\CapCut.exe",
+      "optional": true,
+      "hint": "Instala CapCut de escritorio para abrir los borradores generados."
+    }
+  ]
+}

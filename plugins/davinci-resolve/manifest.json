@@ -1,0 +1,134 @@
+{
+  "id": "davinci-resolve",
+  "name": "DaVinci Resolve",
+  "version": "0.1.0",
+  "description": "Edición profesional mediante la Scripting API de DaVinci Resolve y su servidor MCP. Las capacidades de la edición Free y de Studio se reportan por separado cuando se detecten.",
+  "category": "Edición profesional",
+  "connection_type": "mcp-stdio",
+  "mcp_command_or_endpoint": "uvx davinci-resolve-mcp",
+  "icon": "DR",
+  "accent": "#f97316",
+  "optional": false,
+  "documentation_url": "https://www.blackmagicdesign.com/products/davinciresolve",
+  "install_status": "not_installed",
+  "requirements": [
+    {
+      "id": "resolve-install",
+      "label": "DaVinci Resolve instalado",
+      "kind": "software",
+      "identifier": "Resolve.exe",
+      "optional": false,
+      "check_id": "resolve-installed",
+      "notes": "Se comprueba la ruta de instalación real en este equipo."
+    },
+    {
+      "id": "script-api",
+      "label": "Entorno de scripting de Resolve",
+      "kind": "env",
+      "identifier": "RESOLVE_SCRIPT_API",
+      "optional": true,
+      "check_id": "resolve-script-api",
+      "notes": "Resolve Studio permite scripting externo; el instalador suele definir estas variables."
+    },
+    {
+      "id": "mcp-runner",
+      "label": "Runner MCP (uvx)",
+      "kind": "binary",
+      "identifier": "uvx",
+      "optional": true,
+      "check_id": "resolve-mcp-runner",
+      "notes": "Opcional para la Fase 1: aún no se ejecuta el servidor MCP."
+    }
+  ],
+  "permissions": [
+    {
+      "id": "execute-resolve-scripting",
+      "label": "Ejecutar scripting de Resolve",
+      "description": "Controla Resolve mediante su API de scripting en la Fase 5.",
+      "risk": "high",
+      "requires_confirmation": true
+    },
+    {
+      "id": "read-projects",
+      "label": "Leer proyectos y medios",
+      "description": "Inspecciona proyectos, timelines y medios del usuario.",
+      "risk": "medium",
+      "requires_confirmation": true
+    },
+    {
+      "id": "write-projects",
+      "label": "Modificar proyectos y timelines",
+      "description": "Crea timelines y modifica clips en proyectos de Resolve.",
+      "risk": "high",
+      "requires_confirmation": true
+    },
+    {
+      "id": "render",
+      "label": "Lanzar renders",
+      "description": "Envía trabajos de render a Resolve.",
+      "risk": "medium",
+      "requires_confirmation": true
+    }
+  ],
+  "tools": [
+    { "name": "list_projects", "description": "Lista los proyectos disponibles.", "destructive": false },
+    { "name": "open_project", "description": "Abre un proyecto existente.", "destructive": false },
+    { "name": "get_capabilities", "description": "Consulta qué soporta la versión instalada (Free/Studio).", "destructive": false },
+    { "name": "create_timeline", "description": "Crea una timeline nueva.", "destructive": false },
+    { "name": "add_clip", "description": "Añade un clip a una pista.", "destructive": false },
+    { "name": "add_track", "description": "Añade pistas de vídeo o audio.", "destructive": false },
+    { "name": "add_subtitle", "description": "Añade subtítulos a la timeline.", "destructive": false },
+    { "name": "render", "description": "Lanza un render con un preset.", "destructive": false },
+    { "name": "job_status", "description": "Consulta el estado de un trabajo de render.", "destructive": false }
+  ],
+  "capabilities": [
+    { "id": "project.inspect", "label": "Inspección de proyectos", "description": "Requiere scripting habilitado.", "status": "declared" },
+    { "id": "media.import", "label": "Importar medios", "description": "Media Pool de Resolve.", "status": "declared" },
+    { "id": "timeline.create", "label": "Crear timeline", "description": "Timelines con pistas y clips.", "status": "declared" },
+    { "id": "clip.add", "label": "Añadir clips", "description": "Colocación de clips por frame.", "status": "declared" },
+    { "id": "subtitle.add", "label": "Subtítulos", "description": "Pista de subtítulos.", "status": "declared" },
+    { "id": "render", "label": "Render", "description": "Render con presets de entrega.", "status": "declared" },
+    { "id": "job.status", "label": "Estado de trabajos", "description": "Seguimiento de trabajos en Resolve.", "status": "declared" }
+  ],
+  "known_costs": {
+    "pricing": "freemium",
+    "currency": null,
+    "notes": "La edición Free es gratuita; Studio es de pago. Algunas APIs de scripting externo solo están en Studio.",
+    "limits": "El control por scripting externo depende de la edición y la versión instaladas."
+  },
+  "diagnostics": [
+    {
+      "id": "resolve-installed",
+      "label": "Resolve.exe encontrado",
+      "kind": "file",
+      "target": "C:\\Program Files\\Blackmagic Design\\DaVinci Resolve\\Resolve.exe;%PROGRAMFILES%\\Blackmagic Design\\DaVinci Resolve\\Resolve.exe",
+      "optional": false,
+      "hint": "Instala DaVinci Resolve o ajusta la ruta de instalación declarada en el manifiesto."
+    },
+    {
+      "id": "resolve-script-api",
+      "label": "RESOLVE_SCRIPT_API definido",
+      "kind": "env",
+      "target": "RESOLVE_SCRIPT_API",
+      "optional": true,
+      "hint": "Normalmente lo define el instalador de Resolve. Necesario para scripting desde fuera de la app."
+    },
+    {
+      "id": "resolve-script-lib",
+      "label": "RESOLVE_SCRIPT_LIB definido",
+      "kind": "env",
+      "target": "RESOLVE_SCRIPT_LIB",
+      "optional": true,
+      "hint": "Ruta a la librería de scripting de Resolve."
+    },
+    {
+      "id": "resolve-mcp-runner",
+      "label": "uvx disponible",
+      "kind": "binary",
+      "target": "uvx",
+      "args": ["--version"],
+      "optional": true,
+      "hint": "Runner sugerido para lanzar el servidor MCP de Resolve en la Fase 5."
+    }
+  ]
+}

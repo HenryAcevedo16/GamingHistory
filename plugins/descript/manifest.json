@@ -1,0 +1,99 @@
+{
+  "id": "descript",
+  "name": "Descript",
+  "version": "0.1.0",
+  "description": "Edición guiada por transcripción en la nube. Plugin opcional: requiere cuenta y autorización explícita antes de enviar material fuera de tu equipo.",
+  "category": "Edición por transcripción",
+  "connection_type": "cloud-api",
+  "mcp_command_or_endpoint": "${DESCRIPT_MCP_ENDPOINT|https://api.descript.com}",
+  "icon": "DS",
+  "accent": "#34d399",
+  "optional": true,
+  "documentation_url": "https://www.descript.com",
+  "install_status": "not_installed",
+  "requirements": [
+    {
+      "id": "descript-account",
+      "label": "Token de cuenta de Descript",
+      "kind": "account",
+      "identifier": "DESCRIPT_API_TOKEN",
+      "optional": false,
+      "check_id": "descript-token",
+      "notes": "El diagnóstico solo comprueba que la variable existe; nunca muestra su valor."
+    },
+    {
+      "id": "descript-endpoint",
+      "label": "Endpoint de la API/MCP de Descript",
+      "kind": "endpoint",
+      "identifier": "${DESCRIPT_MCP_ENDPOINT|https://api.descript.com}",
+      "optional": true,
+      "check_id": "descript-endpoint-env",
+      "notes": "Configurable si usas un servidor MCP intermedio."
+    }
+  ],
+  "permissions": [
+    {
+      "id": "send-media-cloud",
+      "label": "Enviar material a la nube",
+      "description": "Sube audio/vídeo a Descript. Nunca se hará sin tu autorización explícita por proyecto.",
+      "risk": "high",
+      "requires_confirmation": true
+    },
+    {
+      "id": "read-projects",
+      "label": "Leer proyectos de Descript",
+      "description": "Consulta proyectos y transcripciones de tu cuenta.",
+      "risk": "medium",
+      "requires_confirmation": true
+    },
+    {
+      "id": "export-transcripts",
+      "label": "Exportar transcripciones",
+      "description": "Descarga transcripciones y timelines desde Descript.",
+      "risk": "medium",
+      "requires_confirmation": true
+    }
+  ],
+  "tools": [
+    { "name": "list_projects", "description": "Lista proyectos de la cuenta.", "destructive": false },
+    { "name": "import_media", "description": "Sube material a un proyecto (requiere autorización).", "destructive": false },
+    { "name": "apply_instruction_edit", "description": "Solicita una edición por instrucciones.", "destructive": false },
+    { "name": "generate_subtitles", "description": "Genera subtítulos a partir de la transcripción.", "destructive": false },
+    { "name": "export_transcript", "description": "Exporta la transcripción.", "destructive": false },
+    { "name": "export_timeline", "description": "Exporta una timeline para continuar en la app.", "destructive": false },
+    { "name": "get_job_status", "description": "Consulta el estado de un trabajo remoto.", "destructive": false }
+  ],
+  "capabilities": [
+    { "id": "project.list", "label": "Listar proyectos", "description": "Requiere cuenta y token.", "status": "declared" },
+    { "id": "media.import", "label": "Importar medios", "description": "Subida a la nube con autorización explícita.", "status": "declared" },
+    { "id": "edit.by_instruction", "label": "Edición por instrucciones", "description": "Depende del plan y de la API disponible.", "status": "declared" },
+    { "id": "subtitle.generate", "label": "Subtítulos", "description": "Desde la transcripción.", "status": "declared" },
+    { "id": "transcript.export", "label": "Exportar transcripción", "description": "Formatos que exponga la cuenta.", "status": "declared" },
+    { "id": "timeline.export", "label": "Exportar timeline", "description": "Sujeto a límites del plan.", "status": "declared" },
+    { "id": "job.status", "label": "Estado de trabajos", "description": "Seguimiento remoto.", "status": "declared" }
+  ],
+  "known_costs": {
+    "pricing": "paid",
+    "currency": "USD",
+    "notes": "Requiere plan de pago y cuenta. Los costes dependen del plan contratado.",
+    "limits": "Límites de exportación y de minutos dependen del plan; no se envían medios sin autorización."
+  },
+  "diagnostics": [
+    {
+      "id": "descript-token",
+      "label": "DESCRIPT_API_TOKEN definido",
+      "kind": "env",
+      "target": "DESCRIPT_API_TOKEN",
+      "optional": false,
+      "hint": "Crea un token en tu cuenta de Descript y expórtalo como variable de entorno."
+    },
+    {
+      "id": "descript-endpoint-env",
+      "label": "Endpoint personalizado configurado",
+      "kind": "env",
+      "target": "DESCRIPT_MCP_ENDPOINT",
+      "optional": true,
+      "hint": "Opcional. Úsalo si trabajas con un servidor MCP intermedio."
+    }
+  ]
+}

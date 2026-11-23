@@ -1,0 +1,107 @@
+{
+  "id": "ffmpeg",
+  "name": "FFmpeg",
+  "version": "0.1.0",
+  "description": "Motor local de inspección, corte, unión, conversión y render. Es el backend de respaldo cuando ningún editor externo está disponible.",
+  "category": "Motor local",
+  "connection_type": "local-binary",
+  "mcp_command_or_endpoint": "ffmpeg",
+  "icon": "FF",
+  "accent": "#22d3ee",
+  "optional": false,
+  "documentation_url": "https://ffmpeg.org/documentation.html",
+  "install_status": "not_installed",
+  "requirements": [
+    {
+      "id": "ffmpeg-binary",
+      "label": "FFmpeg en PATH",
+      "kind": "binary",
+      "identifier": "ffmpeg",
+      "optional": false,
+      "check_id": "ffmpeg-version",
+      "notes": "El diagnóstico ejecuta 'ffmpeg -version' y guarda la salida real."
+    },
+    {
+      "id": "ffprobe-binary",
+      "label": "FFprobe en PATH",
+      "kind": "binary",
+      "identifier": "ffprobe",
+      "optional": false,
+      "check_id": "ffprobe-version",
+      "notes": "Se usa para inspeccionar pistas y duraciones."
+    }
+  ],
+  "permissions": [
+    {
+      "id": "execute-local-binary",
+      "label": "Ejecutar binarios locales",
+      "description": "Ejecuta ffmpeg y ffprobe con listas de argumentos, nunca mediante una shell.",
+      "risk": "low",
+      "requires_confirmation": false
+    },
+    {
+      "id": "read-media-directories",
+      "label": "Leer directorios de medios",
+      "description": "Acceso de lectura a las carpetas de material que autorices en el proyecto.",
+      "risk": "medium",
+      "requires_confirmation": true
+    },
+    {
+      "id": "write-output-directories",
+      "label": "Escribir archivos de salida",
+      "description": "Crea renders y archivos intermedios dentro de los directorios permitidos.",
+      "risk": "medium",
+      "requires_confirmation": true
+    }
+  ],
+  "tools": [
+    { "name": "inspect_media", "description": "Analiza pistas, codecs, duración y metadatos con ffprobe.", "destructive": false },
+    { "name": "cut", "description": "Extrae un rango de un clip sin recodificar cuando el codec lo permite.", "destructive": false },
+    { "name": "concat", "description": "Une clips compatibles en un único archivo.", "destructive": false },
+    { "name": "transcode", "description": "Convierte entre contenedores y codecs.", "destructive": false },
+    { "name": "scale", "description": "Escala y ajusta resolución.", "destructive": false },
+    { "name": "overlay", "description": "Compone overlays e imágenes sobre vídeo.", "destructive": false },
+    { "name": "subtitles", "description": "Incrusta o quema subtítulos.", "destructive": false },
+    { "name": "mix_audio", "description": "Mezcla y normaliza pistas de audio.", "destructive": false },
+    { "name": "apply_effects", "description": "Aplica filtros de vídeo y audio.", "destructive": false },
+    { "name": "render", "description": "Renderiza el resultado final.", "destructive": false }
+  ],
+  "capabilities": [
+    { "id": "media.inspect", "label": "Inspección de medios", "description": "ffprobe sobre el material del proyecto.", "status": "declared" },
+    { "id": "media.cut", "label": "Corte", "description": "Corte por stream copy o recodificación controlada.", "status": "declared" },
+    { "id": "media.concat", "label": "Unión", "description": "Unión de clips compatibles.", "status": "declared" },
+    { "id": "media.transcode", "label": "Conversión", "description": "Conversión de contenedor y codec.", "status": "declared" },
+    { "id": "media.scale", "label": "Escalado", "description": "Cambio de resolución y relación de aspecto.", "status": "declared" },
+    { "id": "media.overlay", "label": "Overlays", "description": "Composición de capas.", "status": "declared" },
+    { "id": "media.subtitles", "label": "Subtítulos", "description": "Incrustado de subtítulos SRT/ASS.", "status": "declared" },
+    { "id": "audio.mix", "label": "Mezcla de audio", "description": "Mezcla, ganancia y normalización.", "status": "declared" },
+    { "id": "media.effects", "label": "Efectos", "description": "Filtros nativos de FFmpeg.", "status": "declared" },
+    { "id": "render.final", "label": "Render final", "description": "Salida a disco del resultado.", "status": "declared" }
+  ],
+  "known_costs": {
+    "pricing": "free",
+    "currency": null,
+    "notes": "Software libre. El coste real es CPU/GPU y tiempo de render local.",
+    "limits": "Sin cuotas de servicio; limitado por el hardware."
+  },
+  "diagnostics": [
+    {
+      "id": "ffmpeg-version",
+      "label": "ffmpeg -version",
+      "kind": "binary",
+      "target": "ffmpeg",
+      "args": ["-version"],
+      "optional": false,
+      "hint": "Instala FFmpeg (por ejemplo con winget install Gyan.FFmpeg) y asegúrate de que está en PATH."
+    },
+    {
+      "id": "ffprobe-version",
+      "label": "ffprobe -version",
+      "kind": "binary",
+      "target": "ffprobe",
+      "args": ["-version"],
+      "optional": false,
+      "hint": "FFprobe se distribuye junto a FFmpeg; revisa que ambos estén en el mismo directorio."
+    }
+  ]
+}
