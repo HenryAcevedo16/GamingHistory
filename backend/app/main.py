@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
-from app.api.routes import editing_router, health, plugins, projects
+from app.api.routes import editing_router, health, plugins, projects, renders
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.errors import StudioError
@@ -23,6 +23,7 @@ logger = logging.getLogger("gaming-history-studio")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    import app.editing.adapters  # noqa: F401
     logger.info("Database ready at %s", settings.resolved_database_url)
     logger.info("Plugins directory: %s", settings.resolved_plugins_dir)
     yield
@@ -50,6 +51,7 @@ app.include_router(health.router, prefix=settings.api_prefix)
 app.include_router(plugins.router, prefix=settings.api_prefix)
 app.include_router(projects.router, prefix=settings.api_prefix)
 app.include_router(editing_router.router, prefix=settings.api_prefix)
+app.include_router(renders.router, prefix=settings.api_prefix)
 
 
 @app.exception_handler(StudioError)

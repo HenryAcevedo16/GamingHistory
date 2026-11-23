@@ -1,7 +1,7 @@
 # PROGRESS — Gaming History Studio
 
 Bitácora operativa del repositorio. Describe lo que existe y lo que se verificó,
-no lo que se planea. Última actualización: **2026-11-23** (cierre de Fase 2).
+no lo que se planea. Última actualización: **2026-11-23** (cierre de Fase 3).
 
 ## 1. Estado actual
 
@@ -9,7 +9,7 @@ no lo que se planea. Última actualización: **2026-11-23** (cierre de Fase 2).
 | --- | --- | --- |
 | 1 | Monorepo, Plugin Manager, manifiestos, base de datos y pantalla Extensiones con datos reales | **Completada y verificada** |
 | 2 | Interfaz `EditorAdapter`, timeline unificado y `EditingRouter` | **Completada y verificada** |
-| 3 | Integración FFmpeg completa y verificada con una operación real | Pendiente (sin código) |
+| 3 | Integración FFmpeg completa y verificada con una operación real | **Completada y verificada** |
 | 4 | Integración VectCutAPI/CapCut verificada | Pendiente (sin código) |
 | 5 | Integración DaVinci Resolve verificada | Pendiente (sin código) |
 | 6 | Integración Descript opcional | Pendiente (sin código) |
@@ -24,10 +24,11 @@ Notas de alcance:
   deshabilitados con etiquetas "Fase 2", "Fase 2", "Fase 4" y "Fase 8". No son pantallas
   implementadas.
 - Existe el contrato `EditorAdapter`, el modelo unificado persistido de timeline y el
-  `EditingRouter`; todavía no existen adaptadores concretos ni ejecución de herramientas de
-  terceros (FFmpeg corresponde a la Fase 3).
+  `EditingRouter`; el adaptador FFmpeg ya es real, se autodescubre al arrancar y ejecuta
+  importación, corte, unión, mezcla de audio, render y consulta de trabajos.
 - La Fase 1 quedó commiteada como `06b4c68` (`Fase 1: Plugin Manager, manifiestos y pantalla
-  Extensiones`). La Fase 2 está verificada pero aún sin commit de cierre.
+  Extensiones`); la Fase 2, como `49243a7` (`Fase 2: adaptadores, timeline y enrutador`). La
+  Fase 3 se cierra con el commit de este cierre.
 
 ## 2. Cómo ejecutar (Windows / PowerShell)
 
@@ -47,6 +48,8 @@ python -m venv .venv
 - API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs
 - Configuración con variables `GHS_*`; ver `backend/.env.example`.
 - La base SQLite se crea automáticamente en `backend/data/studio.db`.
+- FFmpeg solo acepta rutas dentro de `GHS_WORKSPACE_DIR` (por defecto
+  `backend/data/workspace`). Los renders y medios de prueba se crean ahí.
 
 ### Frontend
 
@@ -327,9 +330,9 @@ las fases anteriores.
 ## Fase 2 — Contrato de adaptadores, timeline unificado y EditingRouter (2026-11-23)
 
 - **Estado:** completada
-- **Commit de cierre:** sin commit
+- **Commit de cierre:** `49243a7`
 - **Implementado:**
-  - `backend/app/editing/adapter.py`: `EditorAdapter` abstracto con todos los métodos de la
+   - `backend/app/editing/adapter.py`: `EditorAdapter` abstracto con todos los métodos de la
     SPEC, `EditorOperation`, `AdapterCapabilities` y `execute_operation()`. El wrapper consulta
     `get_capabilities()` antes de invocar un método y rechaza operaciones no soportadas.
   - `backend/app/core/errors.py`: errores estructurados `PLUGIN_NOT_CONNECTED`,
@@ -391,3 +394,109 @@ las fases anteriores.
 - **Próximo paso:**
   - Fase 3: implementar el adaptador FFmpeg y verificar una operación real de corte y unión,
     manteniendo el wrapper de capacidades como puerta obligatoria.
+
+## Fase 3 — Integración FFmpeg verificada (2026-11-23)
+
+- **Estado:** completada
+- **Commit de cierre:** commit de esta fase con mensaje `fase 3: adaptador ffmpeg` (hash en `git log`)
+- **Implementado:**
+  - `backend/app/core/exec.py`: `run_command()` pasa `env=minimal_env()` al subproceso; los
+    binarios ya no heredan credenciales del backend. Prueba `tests/test_exec.py` demuestra
+    que una variable sensible no llega al hijo (`cmd.exe` responde `absent`).
+  - `backend/app/editing/adapter.py`: `execute_operation()` ya no acepta `connected` del
+    llamador; consulta el estado persistido (`PluginState.enabled` y `.connected`) y lanza
+    `PLUGIN_NOT_CONNECTED` si falta o está deshabilitado. Pruebas actualizadas y nueva prueba
+    de plugin deshabilitado.
+  - `backend/app/editing/adapters/ffmpeg.py`: `FFmpegAdapter` registrado con
+    `@register_adapter("ffmpeg")`; `adapters/__init__.py` lo autodescubre y `main.py` lo
+    importa en el arranque, sin que el núcleo lo conozca. Solo ejecuta `ffmpeg`/`ffprobe`
+    mediante `core/exec.py` (lista de argumentos, sin shell, allowlist y timeout).
+  - Validación de rutas: `workspace_path()` exige rutas dentro de `GHS_WORKSPACE_DIR`
+    (`backend/data/workspace` por defecto), rechaza `..` y salidas fuera del workspace;
+    sobrescribir exige `confirm_overwrite=true`.
+  - `get_capabilities()` devuelve solo operaciones implementadas: `import_media`,
+    `create_timeline`, `render_preview`, `render_final`, `export_project` y
+    `get_job_status`. `verified` y las capacidades verificadas se leen de
+    `plugin_state.config`, no están fijadas; se marcan tras operaciones reales.
+  - `create_timeline` valida el proyecto persistido (assets/tracks/clips reales); el resto de
+    métodos no implementados siguen lanzando `CapabilityNotAvailable`.
+  - `FFmpegConverter`: traduce pistas de vídeo/audio a un grafo `filter_complex` (cortes con
+    `-ss/-t`, normalización de tamaño/fps/audio, `concat`, mezcla con `amix`, ganancia con
+    `volume` y posición con `adelay`). `ConversionResult.unsupported` informa transiciones,
+    subtítulos, efectos, fundidos de audio, huecos entre clips y pistas de vídeo adicionales.
+  - `backend/app/editing/jobs.py`: tabla `render_job` en SQLite con id, estado
+    (`queued/running/done/failed`), progreso, log, error, timestamps y ruta de salida.
+  - API: `POST /api/projects/{id}/media` (importación con ffprobe),
+    `POST /api/projects/{id}/renders/{preview|final}` (job asíncrono y confirmación de
+    sobrescritura), `GET /api/jobs`, `GET /api/jobs/{id}`.
+  - Router: con adaptador registrado, `adapter_registered=true`, `executable=true` cuando la
+    operación está implementada y `capability_source="adapter"`; las capacidades del router
+    salen del adaptador y ya no de las declaraciones del manifiesto para FFmpeg.
+  - `GET /api/plugins/{id}/capabilities` y `PluginView` incluyen capacidades declaradas,
+    efectivas y verificadas. Frontend: panel de Extensiones muestra "declaradas vs.
+    verificadas" con los datos reales; el panel del router ya no anuncia "Fase 3".
+  - Pruebas nuevas: contrato real de FFmpeg (se omite con motivo si falta el binario),
+    conversión Unified → FFmpeg, rechazo de rutas, persistencia de jobs y las dos deudas.
+- **Probado realmente (comando → resultado):**
+  - `python -m pytest` → **41 passed**.
+  - `python -m compileall -q app` → exit 0.
+  - `npm run lint` → sin errores ni warnings.
+  - `npm run build` → compilado; rutas `/`, `/_not-found` y `/extensions` generadas.
+  - `npx tsc --noEmit` → exit 0 (tras `next build`, que genera `.next/types` con `LayoutProps`).
+  - `ffmpeg -version` / `ffprobe -version` → 9.0.2 (Gyan build) presentes en PATH.
+  - Se generaron dos clips reales de 2 s con `testsrc`/`testsrc2` + `sine`
+    (`phase3-a.mp4`, `phase3-b.mp4`).
+  - Importación por API con ffprobe → `durA=2.0`, `durB=2.0`.
+  - Timeline real: corte de 0,8 s (desde 0,2 s) del clip A + corte de 1,2 s (desde 0,4 s) del
+    clip B, contiguos → 2,0 s esperados.
+  - Primer render real falló: FFmpeg exigía inputs de `concat` intercalados
+    `[v0][a0][v1][a1]` y el conversor los agrupaba. Se registró como job `failed` y auditoría
+    `render_final/error`; se corrigió el conversor y no se simuló el éxito.
+  - Render final por API (job `d721163ca6964a65bd83a0275aace109`) → `done`, progreso 100.
+  - `ffprobe` sobre `phase3-final.mp4` → existe, duración **2.000000 s**, streams `h264`
+    (160×90) y `aac`.
+  - `get_capabilities()` antes del render final exitoso → `media.inspect=verified`;
+    `media.cut`, `media.concat`, `audio.mix`, `render.final=declared`; el resto
+    `unsupported`. Después → las cinco capacidades `verified`.
+  - Sobrescritura sin confirmación → 422 `INVALID_OPERATION` con mensaje explícito.
+  - Ruta `../AGENTS.md` → 422 `INVALID_OPERATION` ("Las rutas con '..' no están permitidas").
+  - `GET /api/router/decisions` → `auto_assembly`: FFmpeg, `capability_source="adapter"`,
+    `adapter_registered=true`, `executable=true`.
+  - Auditoría de FFmpeg: `import_media/ok`, `render_final/queued`, `running`, `ok` y el
+    `error` real del primer intento.
+  - Frontend dev levantado en `127.0.0.1:3000` con `NEXT_PUBLIC_API_URL=http://127.0.0.1:8011`;
+    `GET /extensions` → 200. Backend de verificación en `127.0.0.1:8011` porque el puerto 8000
+    estaba ocupado por otro proceso ajeno al proyecto.
+- **No probado / limitaciones:**
+  - No se implementan `create_project`, `add_track`, `add_clip`, `update_clip`,
+    `remove_clip`, `add_audio`, `add_subtitles`, `add_effect`; siguen siendo
+    `CapabilityNotAvailable`.
+  - Transiciones, subtítulos, efectos, fundidos de audio, huecos sin clip y más de una pista
+    de vídeo se reportan en `unsupported`, no se renderizan.
+  - `render_preview` usa el mismo pipeline de recodificación que el final; no hay preview
+    rápida ni `-preset` diferenciado.
+  - El progreso es grueso (0 → 10 → 100); no se parsea el progreso incremental de FFmpeg.
+  - Los jobs se ejecutan con `BackgroundTasks` en el mismo proceso: si el backend muere, un
+    job `queued/running` queda huérfano y no hay recuperación automática.
+  - No hay bloqueo por proyecto ni por ruta de salida: dos renders simultáneos podrían
+    escribir el mismo archivo.
+  - Siempre se recodifica a H.264/AAC; no hay stream copy ni selección de códecs/hardware.
+  - Un único workspace configurable; no hay allowlist por proyecto ni por medio.
+  - La UI se verificó con HTTP 200, lint, TypeScript y build; no se hizo prueba interactiva
+    de navegador sobre las nuevas etiquetas declaradas/verificadas.
+  - El estado verificado vive en `plugin_state.config`; borrar la base exige repetir las
+    operaciones reales para volver a marcarlo.
+- **Notas de entorno y estado:**
+  - Plugins detectados/instalados/conectados: FFmpeg instalado y conectado con capacidades
+    verificadas; DaVinci Resolve instalado y no conectado; VectCutAPI/CapCut y Descript sin
+    dependencias.
+  - Puertos y procesos: backend de verificación en `127.0.0.1:8011` (8000 ocupado por otro
+    proyecto); frontend Next.js en `127.0.0.1:3000`. Logs del frontend en
+    `%TEMP%\opencode\ghs-frontend.log`.
+  - Base de datos / auditoría: `backend/data/studio.db` contiene `plugin_state`, `audit_log`,
+    `project_record` y `render_job`. Medios y render de prueba en
+    `backend/data/workspace/`.
+- **Próximo paso:**
+  - Fase 4: integración VectCutAPI/CapCut verificada, sin reutilizar el adaptador FFmpeg ni
+    tocar el núcleo. Deuda técnica: progreso incremental real y recuperación de jobs
+    interrumpidos.

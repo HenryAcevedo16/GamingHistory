@@ -26,8 +26,9 @@ def test_unsupported_method_raises_capability_not_available() -> None:
     assert adapter.calls == []
 
 
-def test_wrapper_queries_capabilities_before_executing() -> None:
+def test_wrapper_queries_capabilities_before_executing(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter = DummyAdapter(operations={EditorOperation.CREATE_TIMELINE})
+    monkeypatch.setattr("app.editing.adapter._plugin_is_connected", lambda _: True)
 
     result = execute_operation(
         adapter,
@@ -40,8 +41,9 @@ def test_wrapper_queries_capabilities_before_executing() -> None:
     assert adapter.calls[0][0] == "create_timeline"
 
 
-def test_wrapper_rejects_unsupported_operation() -> None:
+def test_wrapper_rejects_unsupported_operation(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter = DummyAdapter(operations={EditorOperation.CREATE_TIMELINE})
+    monkeypatch.setattr("app.editing.adapter._plugin_is_connected", lambda _: True)
 
     with pytest.raises(CapabilityNotAvailable) as excinfo:
         execute_operation(adapter, EditorOperation.RENDER_FINAL, {"timeline_id": "t1"})
@@ -61,27 +63,40 @@ def test_wrapper_rejects_unknown_operation_name() -> None:
     assert adapter.calls == []
 
 
-def test_wrapper_rejects_disconnected_plugin() -> None:
+def test_wrapper_rejects_disconnected_plugin(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter = DummyAdapter(operations={EditorOperation.CREATE_TIMELINE})
+    monkeypatch.setattr("app.editing.adapter._plugin_is_connected", lambda _: False)
 
     with pytest.raises(PluginNotConnected):
         execute_operation(
             adapter,
             EditorOperation.CREATE_TIMELINE,
             {"project_id": "p1", "name": "Doc"},
-            connected=False,
         )
 
     assert adapter.calls == []
 
 
-def test_wrapper_rejects_invalid_arguments() -> None:
+def test_wrapper_rejects_invalid_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter = DummyAdapter(operations={EditorOperation.CREATE_TIMELINE})
+    monkeypatch.setattr("app.editing.adapter._plugin_is_connected", lambda _: True)
 
     with pytest.raises(InvalidOperation):
         execute_operation(adapter, EditorOperation.CREATE_TIMELINE, {"wrong": 1})
 
     assert adapter.capability_calls == 1
+    assert adapter.calls == []
+
+
+def test_wrapper_rejects_disabled_plugin_from_persisted_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = DummyAdapter(operations={EditorOperation.CREATE_TIMELINE})
+    monkeypatch.setattr("app.editing.adapter._plugin_is_connected", lambda _: False)
+
+    with pytest.raises(PluginNotConnected):
+        execute_operation(adapter, EditorOperation.CREATE_TIMELINE, {"project_id": "p1", "name": "Doc"})
+
     assert adapter.calls == []
 
 

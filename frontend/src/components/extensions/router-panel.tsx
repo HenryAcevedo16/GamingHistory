@@ -72,7 +72,7 @@ function DecisionCard({ decision }: { decision: RouterDecision }) {
                   : "border-warning/25 bg-warning/10 text-warning",
               )}
             >
-              {selected.executable ? "ejecutable" : "sin adaptador · Fase 3"}
+              {selected.executable ? "ejecutable" : "sin adaptador ejecutable"}
             </span>
           </div>
         ) : (

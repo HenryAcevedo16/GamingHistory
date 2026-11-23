@@ -48,6 +48,8 @@ class PluginView(BaseModel):
     permissions: list[PluginPermission] = Field(default_factory=list)
     tools: list[PluginTool] = Field(default_factory=list)
     capabilities: list[PluginCapability] = Field(default_factory=list)
+    declared_capabilities: list[PluginCapability] = Field(default_factory=list)
+    verified_capabilities: list[str] = Field(default_factory=list)
     known_costs: KnownCosts
     diagnostics: list[DiagnosticCheck] = Field(default_factory=list)
 
@@ -95,6 +97,8 @@ class CapabilityListResponse(BaseModel):
     plugin_id: str
     note: str
     capabilities: list[PluginCapability]
+    declared_capabilities: list[PluginCapability] = Field(default_factory=list)
+    verified_capabilities: list[str] = Field(default_factory=list)
 
 
 class RequirementStatus(BaseModel):

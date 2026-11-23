@@ -78,6 +78,7 @@ def run_command(
             timeout=timeout,
             shell=False,
             cwd=str(cwd) if cwd else None,
+            env=minimal_env(),
         )
         duration = int((time.perf_counter() - started) * 1000)
         return CommandResult(

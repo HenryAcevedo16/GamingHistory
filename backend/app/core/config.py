@@ -27,6 +27,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
     command_timeout_seconds: float = 15.0
+    workspace_dir: Path = BACKEND_ROOT / "data" / "workspace"
     log_level: str = "INFO"
 
     @property
@@ -40,6 +41,12 @@ class Settings(BaseSettings):
     @property
     def resolved_plugins_dir(self) -> Path:
         return Path(self.plugins_dir).expanduser().resolve()
+
+    @property
+    def resolved_workspace_dir(self) -> Path:
+        path = Path(self.workspace_dir).expanduser().resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
 
 settings = Settings()

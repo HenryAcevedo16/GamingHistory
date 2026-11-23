@@ -350,12 +350,13 @@ export function PluginDetailSheet({
 
           <Section
             icon={Activity}
-            title="Capacidades declaradas"
+            title="Capacidades declaradas vs. verificadas"
             count={plugin.capabilities.length}
           >
             <p className="text-[0.7rem] leading-snug text-muted-foreground/80">
-              El manifiesto declara estas capacidades. Ninguna se marca como verificada
-              hasta ejecutar una operación real con el editor (Fase 2 en adelante).
+              {plugin.declared_capabilities.length} declaradas en el manifiesto · {" "}
+              {plugin.verified_capabilities.length} verificadas por una operación real.
+              Las restantes se muestran como declaradas o no soportadas por el adaptador.
             </p>
             <ul className="mt-1 grid gap-1.5 sm:grid-cols-2">
               {plugin.capabilities.map((capability) => (

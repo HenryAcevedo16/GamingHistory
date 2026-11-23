@@ -84,8 +84,9 @@ def test_default_rules_select_only_connected_capable_plugins() -> None:
 
     assert decisions["auto_assembly"].selected is not None
     assert decisions["auto_assembly"].selected.plugin_id == "ffmpeg"
-    assert decisions["auto_assembly"].selected.executable is False
-    assert "Fase 3" in decisions["auto_assembly"].explanation
+    assert decisions["auto_assembly"].selected.executable is True
+    assert decisions["auto_assembly"].selected.adapter_registered is True
+    assert decisions["auto_assembly"].capability_source == "adapter"
 
     for operation in ("editable_draft", "professional_edit", "transcript_edit"):
         assert decisions[operation].selected is None
@@ -147,14 +148,14 @@ def test_cloud_plugin_requires_explicit_authorization() -> None:
     assert allowed.selected.plugin_id == "descript"
 
 
-def test_missing_capability_is_rejected_with_the_exact_list() -> None:
+def test_ffmpeg_adapter_capabilities_override_manifest_declarations() -> None:
     views = [make_view("ffmpeg", capabilities=("render.final",))]
 
     decision = EditingRouter(views).decide("auto_assembly")
 
-    assert decision.selected is None
-    assert decision.candidates[0].missing_capabilities == ["media.cut", "media.concat"]
-    assert "media.cut" in decision.candidates[0].reason
+    assert decision.selected is not None
+    assert decision.selected.plugin_id == "ffmpeg"
+    assert decision.capability_source == "adapter"
 
 
 def test_manual_selection_overrides_default_preference() -> None:

@@ -6,6 +6,8 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.editing.adapter import EditorOperation
+from app.editing.registry import default_registry
 from app.core.errors import (
     DependencyUnavailable,
     PermissionsNotAcknowledged,
@@ -102,6 +104,7 @@ class PluginManager:
             diagnosis = DiagnosisSummary(
                 ran_at=state.last_diagnosis_at, ok=state.last_diagnosis_ok
             )
+        capabilities = self._capabilities(manifest, state)
         return PluginView(
             id=manifest.id,
             name=manifest.name,
@@ -126,10 +129,30 @@ class PluginManager:
             requirements=manifest.requirements,
             permissions=manifest.permissions,
             tools=manifest.tools,
-            capabilities=manifest.capabilities,
+            capabilities=capabilities,
+            declared_capabilities=manifest.capabilities,
+            verified_capabilities=[item.id for item in capabilities if item.status == "verified"],
             known_costs=manifest.known_costs,
             diagnostics=manifest.diagnostics,
         )
+
+    def _capabilities(self, manifest: PluginManifest, state: PluginState):
+        if not default_registry.has(manifest.id):
+            return manifest.capabilities
+        operations = default_registry.create(manifest.id).get_capabilities().operations
+        supported = {
+            EditorOperation.IMPORT_MEDIA: {"media.inspect"},
+            EditorOperation.CREATE_TIMELINE: {"media.cut", "media.concat"},
+            EditorOperation.RENDER_PREVIEW: {"render.final"},
+            EditorOperation.RENDER_FINAL: {"render.final", "audio.mix"},
+            EditorOperation.EXPORT_PROJECT: {"render.final"},
+        }
+        executable = set().union(*(supported.get(operation, set()) for operation in operations))
+        verified = set(state.config.get("ffmpeg_verified_capabilities", []))
+        return [
+            capability.model_copy(update={"status": "verified" if capability.id in verified else ("declared" if capability.id in executable else "unsupported")})
+            for capability in manifest.capabilities
+        ]
 
     def _run_diagnostics(self, manifest: PluginManifest, state: PluginState) -> DiagnosticReport:
         report = run_checks(
@@ -182,13 +205,17 @@ class PluginManager:
 
     def get_capabilities(self, plugin_id: str) -> CapabilityListResponse:
         manifest = self._manifest(plugin_id)
+        state = self._state(manifest)
+        capabilities = self._capabilities(manifest, state)
         return CapabilityListResponse(
             plugin_id=manifest.id,
             note=(
-                "Capacidades declaradas en el manifiesto. El estado 'declared' significa "
-                "que aún no fueron verificadas mediante una operación real (Fase 2+)."
+                "Capacidades declaradas contrastadas con el adaptador instalado; solo una "
+                "operación real completa cambia su estado a 'verified'."
             ),
-            capabilities=manifest.capabilities,
+            capabilities=capabilities,
+            declared_capabilities=manifest.capabilities,
+            verified_capabilities=[item.id for item in capabilities if item.status == "verified"],
         )
 
     def audit_entries(self, plugin_id: str, limit: int = 50) -> list[AuditEntry]:

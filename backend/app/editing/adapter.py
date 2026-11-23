@@ -24,6 +24,18 @@ from app.core.errors import (
 )
 
 
+def _plugin_is_connected(plugin_id: str) -> bool:
+    """Read execution eligibility from persisted plugin lifecycle state."""
+    from sqlmodel import Session
+
+    from app.core.db import engine
+    from app.models.plugin import PluginState
+
+    with Session(engine) as session:
+        state = session.get(PluginState, plugin_id)
+        return bool(state is not None and state.enabled and state.connected)
+
+
 class EditorOperation(str, Enum):
     CONNECT = "connect"
     DISCONNECT = "disconnect"
@@ -159,8 +171,6 @@ def execute_operation(
     adapter: EditorAdapter,
     operation: EditorOperation | str,
     params: dict[str, Any] | None = None,
-    *,
-    connected: bool | None = None,
 ) -> Any:
     """Central gate: capabilities first, then the actual adapter method.
 
@@ -170,9 +180,9 @@ def execute_operation(
     """
     op = _coerce_operation(operation)
 
-    if connected is False:
+    if not _plugin_is_connected(adapter.plugin_id):
         raise PluginNotConnected(
-            "El plugin no está conectado; la operación no se ejecuta.",
+            "El plugin no está conectado o está deshabilitado; la operación no se ejecuta.",
             details={"plugin_id": adapter.plugin_id, "operation": op.value},
         )
 

@@ -113,6 +113,11 @@ class EditingRouter:
 
         required = tuple(required_capabilities or spec.required_capabilities)
         preferred = preferred_plugin_id or spec.preferred_plugin_id
+        capability_source = (
+            "adapter"
+            if any(self.adapters.has(view.id) for view in self.views)
+            else "manifest"
+        )
 
         if not self.views:
             return RouterDecision(
@@ -121,7 +126,7 @@ class EditingRouter:
                 description=spec.description,
                 required_capabilities=list(required),
                 adapter_operation=spec.adapter_operation.value,
-                capability_source="manifest",
+                capability_source=capability_source,
                 selected=None,
                 candidates=[],
                 discarded=[],
@@ -139,6 +144,7 @@ class EditingRouter:
                 preferred=preferred,
                 manual_plugin_id=manual_plugin_id,
                 cloud_authorized=cloud_authorized,
+                adapter_operation=spec.adapter_operation,
             )
             candidates.append(candidate)
             if candidate.eligible:
@@ -158,6 +164,11 @@ class EditingRouter:
 
         if selected is not None:
             adapter_registered = self.adapters.has(selected.plugin_id)
+            executable = (
+                adapter_registered
+                and spec.adapter_operation
+                in self.adapters.create(selected.plugin_id).get_capabilities().operations
+            )
             selected.selected = True
             selected.reason = self._selection_reason(selected, spec, preferred)
             discarded = [item for item in candidates if not item.selected]
@@ -166,10 +177,9 @@ class EditingRouter:
                 f"{selected.reason.lower()} "
                 f"{len(discarded)} plugin(s) descartados."
             )
-            if not adapter_registered:
+            if not executable:
                 explanation += (
-                    " Aviso: todavía no hay adaptador registrado para este plugin, "
-                    "así que esta decisión no ejecuta nada (Fase 3)."
+                    " Aviso: el adaptador registrado no implementa la operación solicitada."
                 )
             selection = RouterSelection(
                 plugin_id=selected.plugin_id,
@@ -177,7 +187,7 @@ class EditingRouter:
                 reason=selected.reason,
                 score=scores.get(selected.plugin_id, 0),
                 adapter_registered=adapter_registered,
-                executable=adapter_registered,
+                executable=executable,
             )
         else:
             discarded = candidates
@@ -203,7 +213,7 @@ class EditingRouter:
             description=spec.description,
             required_capabilities=list(required),
             adapter_operation=spec.adapter_operation.value,
-            capability_source="manifest",
+            capability_source=capability_source,
             selected=selection,
             candidates=candidates,
             discarded=discarded,
@@ -236,6 +246,7 @@ class EditingRouter:
         preferred: str,
         manual_plugin_id: str | None,
         cloud_authorized: bool,
+        adapter_operation: EditorOperation,
     ) -> tuple[RouterCandidate, int]:
         installed = view.install_status in INSTALLED_STATUSES
         adapter_registered = self.adapters.has(view.id)
@@ -244,6 +255,21 @@ class EditingRouter:
             for capability in view.capabilities
             if capability.status != "unsupported"
         }
+        if adapter_registered:
+            operations = (
+                self.adapters.create(view.id).get_capabilities().operations
+                if view.enabled and view.connected
+                else set()
+            )
+            operation_capabilities = {
+                EditorOperation.IMPORT_MEDIA: {"media.inspect"},
+                EditorOperation.CREATE_TIMELINE: {"media.cut", "media.concat"},
+                EditorOperation.RENDER_FINAL: {"render.final", "audio.mix"},
+                EditorOperation.RENDER_PREVIEW: {"render.final"},
+            }
+            available_capabilities = set().union(
+                *(operation_capabilities.get(item, set()) for item in operations)
+            )
         missing = [capability for capability in required if capability not in available_capabilities]
 
         def candidate(reason: str, *, eligible: bool) -> RouterCandidate:
@@ -288,6 +314,15 @@ class EditingRouter:
                     "No declara las capacidades requeridas: " + ", ".join(missing) + ".",
                     eligible=False,
                 ),
+                0,
+            )
+        if (
+            adapter_registered
+            and adapter_operation
+            not in self.adapters.create(view.id).get_capabilities().operations
+        ):
+            return (
+                candidate("El adaptador no implementa la operación solicitada.", eligible=False),
                 0,
             )
 
