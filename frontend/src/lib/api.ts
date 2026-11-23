@@ -5,6 +5,7 @@ import type {
   PluginListResponse,
   PluginView,
   RequirementReport,
+  RouterDecisionsResponse,
 } from "@/lib/types";
 
 export const API_BASE_URL =
@@ -90,5 +91,9 @@ export const api = {
     request<DiagnosticResponse>(`/plugins/${id}/diagnose`, actionBody()),
   verifyRequirements: (id: string) =>
     request<RequirementReport>(`/plugins/${id}/verify-requirements`, actionBody()),
+  routerDecisions: (cloudAuthorized: boolean) =>
+    request<RouterDecisionsResponse>(
+      `/router/decisions?cloud_authorized=${cloudAuthorized ? "true" : "false"}`,
+    ),
   health: () => request<HealthResponse>("/health"),
 };

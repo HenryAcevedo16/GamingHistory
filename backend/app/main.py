@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
-from app.api.routes import health, plugins
+from app.api.routes import editing_router, health, plugins, projects
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.errors import StudioError
@@ -33,7 +33,7 @@ app = FastAPI(
     version=__version__,
     description=(
         "Centro de control para editar documentales con herramientas externas "
-        "mediante plugins. Fase 1: Plugin Manager y diagnósticos reales."
+        "mediante plugins. Fase 2: Plugin Manager, timeline unificado y enrutamiento."
     ),
     lifespan=lifespan,
 )
@@ -48,6 +48,8 @@ app.add_middleware(
 
 app.include_router(health.router, prefix=settings.api_prefix)
 app.include_router(plugins.router, prefix=settings.api_prefix)
+app.include_router(projects.router, prefix=settings.api_prefix)
+app.include_router(editing_router.router, prefix=settings.api_prefix)
 
 
 @app.exception_handler(StudioError)

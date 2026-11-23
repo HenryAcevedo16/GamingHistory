@@ -15,6 +15,7 @@ engine = create_engine(
 
 def init_db() -> None:
     """Create tables. Imports models so SQLModel metadata is populated."""
+    from app.editing import persistence  # noqa: F401
     from app.models import audit, plugin  # noqa: F401
 
     SQLModel.metadata.create_all(engine)

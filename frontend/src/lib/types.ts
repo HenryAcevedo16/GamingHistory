@@ -165,6 +165,55 @@ export interface ActionResponse {
   plugin: PluginView;
 }
 
+export type RouterOperation =
+  | "auto_assembly"
+  | "editable_draft"
+  | "professional_edit"
+  | "transcript_edit";
+
+export interface RouterCandidate {
+  plugin_id: string;
+  name: string;
+  eligible: boolean;
+  selected: boolean;
+  reason: string;
+  enabled: boolean;
+  installed: boolean;
+  connected: boolean;
+  adapter_registered: boolean;
+  pricing: PricingModel;
+  missing_capabilities: string[];
+}
+
+export interface RouterSelection {
+  plugin_id: string;
+  name: string;
+  reason: string;
+  score: number;
+  adapter_registered: boolean;
+  executable: boolean;
+}
+
+export interface RouterDecision {
+  operation: RouterOperation;
+  label: string;
+  description: string;
+  required_capabilities: string[];
+  adapter_operation: string;
+  capability_source: string;
+  selected?: RouterSelection | null;
+  candidates: RouterCandidate[];
+  discarded: RouterCandidate[];
+  explanation: string;
+  generated_at: string;
+}
+
+export interface RouterDecisionsResponse {
+  cloud_authorized: boolean;
+  decisions: RouterDecision[];
+  generated_at: string;
+}
+
 export interface HealthResponse {
   status: string;
   app: string;

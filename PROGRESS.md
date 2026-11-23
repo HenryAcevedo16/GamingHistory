@@ -1,14 +1,14 @@
 # PROGRESS — Gaming History Studio
 
 Bitácora operativa del repositorio. Describe lo que existe y lo que se verificó,
-no lo que se planea. Última actualización: **2026-11-23** (cierre de Fase 1).
+no lo que se planea. Última actualización: **2026-11-23** (cierre de Fase 2).
 
 ## 1. Estado actual
 
 | Fase | Alcance según SPEC.md | Estado |
 | --- | --- | --- |
 | 1 | Monorepo, Plugin Manager, manifiestos, base de datos y pantalla Extensiones con datos reales | **Completada y verificada** |
-| 2 | Interfaz `EditorAdapter`, timeline unificado y `EditingRouter` | Pendiente (sin código) |
+| 2 | Interfaz `EditorAdapter`, timeline unificado y `EditingRouter` | **Completada y verificada** |
 | 3 | Integración FFmpeg completa y verificada con una operación real | Pendiente (sin código) |
 | 4 | Integración VectCutAPI/CapCut verificada | Pendiente (sin código) |
 | 5 | Integración DaVinci Resolve verificada | Pendiente (sin código) |
@@ -23,10 +23,11 @@ Notas de alcance:
 - En la barra lateral, Dashboard, Proyectos, Trabajos y Auditoría son elementos
   deshabilitados con etiquetas "Fase 2", "Fase 2", "Fase 4" y "Fase 8". No son pantallas
   implementadas.
-- No existe todavía `EditorAdapter`, modelo de timeline, `EditingRouter`, adaptadores de
-  edición ni ejecución real de herramientas de terceros.
-- El repositorio git no tiene commits (`master` sin historial) y todo el proyecto está sin
-  seguimiento al cierre. **No hay commit de cierre de Fase 1.**
+- Existe el contrato `EditorAdapter`, el modelo unificado persistido de timeline y el
+  `EditingRouter`; todavía no existen adaptadores concretos ni ejecución de herramientas de
+  terceros (FFmpeg corresponde a la Fase 3).
+- La Fase 1 quedó commiteada como `06b4c68` (`Fase 1: Plugin Manager, manifiestos y pantalla
+  Extensiones`). La Fase 2 está verificada pero aún sin commit de cierre.
 
 ## 2. Cómo ejecutar (Windows / PowerShell)
 
@@ -322,3 +323,71 @@ las fases anteriores.
 - **Próximo paso:**
   - <siguiente fase o deuda técnica concreta>
 ```
+
+## Fase 2 — Contrato de adaptadores, timeline unificado y EditingRouter (2026-11-23)
+
+- **Estado:** completada
+- **Commit de cierre:** sin commit
+- **Implementado:**
+  - `backend/app/editing/adapter.py`: `EditorAdapter` abstracto con todos los métodos de la
+    SPEC, `EditorOperation`, `AdapterCapabilities` y `execute_operation()`. El wrapper consulta
+    `get_capabilities()` antes de invocar un método y rechaza operaciones no soportadas.
+  - `backend/app/core/errors.py`: errores estructurados `PLUGIN_NOT_CONNECTED`,
+    `ADAPTER_NOT_REGISTERED`, `INVALID_OPERATION` y `PROJECT_NOT_FOUND`; se conserva
+    `PLUGIN_DISABLED` y `CAPABILITY_NOT_AVAILABLE` de la Fase 1.
+  - `backend/app/editing/registry.py`: registro genérico `plugin_id -> factory/clase de
+    EditorAdapter`, sin importaciones de adaptadores concretos desde el núcleo.
+  - `backend/app/editing/timeline.py` y `persistence.py`: proyecto unificado Pydantic v2 con
+    assets, escenas, pistas de vídeo/audio/subtítulos, clips, transiciones, efectos, metadatos,
+    validación de referencias/duraciones/solapamientos y persistencia JSON en SQLite
+    (`project_record`).
+  - `backend/app/editing/converters.py`: contrato base Unified -> editor con
+    `ConversionResult.unsupported` para informar elementos no exportables.
+  - `backend/app/editing/router.py`: reglas de selección de SPEC, selección manual, coste,
+    capacidades declaradas, instalación, conexión, estado habilitado y autorización explícita
+    para plugins cloud. Las respuestas aclaran cuando no existe un adaptador ejecutable aún.
+  - API: `GET/POST /api/projects`, `GET/PUT /api/projects/{id}`,
+    `GET/PUT /api/projects/{id}/timeline`, `GET /api/router/decisions` y
+    `POST /api/router/decide`.
+  - Frontend: sección **Enrutador** en `/extensions`, con decisiones reales por operación,
+    lista de descartes, recálculo y un control explícito de autorización cloud que solo afecta
+    la decisión, nunca envía material.
+  - `backend/tests/`: 34 pruebas para el contrato, validaciones/serialización/persistencia de
+    timeline y reglas del router. `tests/dummy_adapter.py` es exclusivo de pruebas y no se
+    importa ni registra en la app.
+- **Probado realmente (comando → resultado):**
+  - `backend\.venv\Scripts\python.exe -m pytest` → **34 passed**.
+  - `backend\.venv\Scripts\python.exe -m compileall -q app` → exit 0.
+  - `frontend\npm run lint` → sin errores ni warnings.
+  - `frontend\npx tsc --noEmit` → exit 0.
+  - `frontend\npm run build` → compilado; rutas `/`, `/_not-found` y `/extensions` generadas.
+  - `GET /api/router/decisions` con el estado persistido real → `auto_assembly` eligió
+    **FFmpeg**; `editable_draft`, `professional_edit` y `transcript_edit` no eligieron editor.
+    VectCutAPI/CapCut y Descript se descartaron por dependencias ausentes; Resolve por no tener
+    conexión verificada. FFmpeg se marca no ejecutable aún porque no existe adaptador concreto
+    hasta Fase 3.
+  - Operación HTTP real de proyectos → se creó un proyecto, se actualizó con asset/escena/pista,
+    `GET /timeline` devolvió el clip persistido y una actualización con clips solapados recibió
+    HTTP 422. El proyecto temporal se eliminó después de verificar.
+  - `GET http://127.0.0.1:3000/extensions` → HTTP 200 y contenido de la sección Enrutador.
+- **No probado / limitaciones:**
+  - No se implementó ni ejecutó ningún adaptador de producción; FFmpeg queda expresamente para
+    Fase 3. Por ello el router puede recomendar FFmpeg según estado/capacidades del manifiesto,
+    pero informa `executable=false` y no intenta editar.
+  - Las capacidades usadas por el router son las declaradas en los manifiestos hasta que exista
+    un adaptador que pueda devolver capacidades verificadas por operación real.
+  - No se contactó Descript ni se envió material a la nube. La autorización cloud se validó con
+    pruebas unitarias sobre un plugin conectado simulado y con la regla real del endpoint.
+  - No se hizo prueba visual interactiva en navegador de los controles nuevos; se verificó la
+    carga HTTP de `/extensions`, TypeScript, lint y build.
+- **Notas de entorno y estado:**
+  - Plugins detectados/instalados/conectados: FFmpeg instalado y conectado; DaVinci Resolve
+    instalado pero no conectado; VectCutAPI/CapCut y Descript no instalados por dependencias
+    ausentes.
+  - Puertos y procesos: backend Uvicorn en `127.0.0.1:8000`; frontend Next.js en
+    `127.0.0.1:3000`.
+  - Base de datos / auditoría: `backend/data/studio.db` contiene `plugin_state`, `audit_log` y
+    ahora `project_record`; los cambios de timeline se guardan como JSON validado.
+- **Próximo paso:**
+  - Fase 3: implementar el adaptador FFmpeg y verificar una operación real de corte y unión,
+    manteniendo el wrapper de capacidades como puerta obligatoria.

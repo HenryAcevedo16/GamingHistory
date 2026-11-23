@@ -62,6 +62,28 @@ class InvalidManifest(StudioError):
     status_code = 422
 
 
+class ProjectNotFound(StudioError):
+    code = "PROJECT_NOT_FOUND"
+    status_code = 404
+
+
+class PluginNotConnected(StudioError):
+    code = "PLUGIN_NOT_CONNECTED"
+    status_code = 409
+
+
+class AdapterNotRegistered(StudioError):
+    code = "ADAPTER_NOT_REGISTERED"
+    status_code = 409
+
+
+class InvalidOperation(StudioError):
+    """Bad operation name or arguments for an editor adapter."""
+
+    code = "INVALID_OPERATION"
+    status_code = 422
+
+
 class CapabilityNotAvailable(StudioError):
     """Raised when a plugin/editor cannot perform the requested operation.
 
