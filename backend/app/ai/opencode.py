@@ -8,7 +8,9 @@ from dataclasses import dataclass
 
 import httpx
 
-from app.ai.errors import AIAuthFailed, AIError, AIServerUnavailable, AITimeout
+from app.ai.errors import (
+    AIAuthFailed, AIError, AIModelRequired, AIProviderUnavailable, AIServerUnavailable, AITimeout,
+)
 
 _DENY_ALL = [{"action": "*", "resource": "*", "effect": "deny"}]
 _ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}")
@@ -73,7 +75,8 @@ class OpenCodeServerProvider:
             yield client
 
     @staticmethod
-    def _request(client: httpx.Client, method: str, path: str, **kwargs) -> httpx.Response:
+    def _request(client: httpx.Client, method: str, path: str, *,
+                 generation_model: StudioModel | None = None, **kwargs) -> httpx.Response:
         try:
             response = client.request(method, path, **kwargs)
         except httpx.TimeoutException:
@@ -87,12 +90,20 @@ class OpenCodeServerProvider:
         if not response.is_success:
             # For generation V2 may wrap an upstream authentication failure as
             # ProviderRequestError. Never expose raw provider bodies or settings.
-            if path.endswith("/generate"):
-                error = OpenCodeServerProvider._json(response)
+            if generation_model is not None:
+                try:
+                    error = OpenCodeServerProvider._json(response)
+                except AIError:
+                    error = {}
                 data = error.get("data", {})
                 errors = (error, data) if isinstance(data, dict) else (error,)
                 if any(e.get("status") in (401, 403) or e.get("reason") == "authentication" for e in errors):
                     raise AIAuthFailed("El modelo de OpenCode rechazó la autenticación. Revisa el login.")
+                if response.status_code == 503:
+                    raise AIProviderUnavailable(
+                        f"El proveedor de {generation_model.key} no está disponible (HTTP 503). "
+                        "Reintenta más tarde o elige otro modelo."
+                    )
             raise AIError("OpenCode no pudo completar la operación solicitada.")
         return response
 
@@ -106,7 +117,7 @@ class OpenCodeServerProvider:
             pass
         raise AIError("OpenCode no devolvió una respuesta válida de la API v2.")
 
-    def _catalog(self, client: httpx.Client) -> tuple[dict[str, StudioModel], str | None]:
+    def _catalog(self, client: httpx.Client) -> dict[str, StudioModel]:
         # V2 documents that the first snapshot may precede initial plugin
         # settlement. Retry only empty snapshots, never a generation request.
         for attempt in range(4):
@@ -123,17 +134,13 @@ class OpenCodeServerProvider:
             if providers == []:
                 raise AIAuthFailed("OpenCode no tiene un proveedor activo con login o credenciales.")
             raise AIError("OpenCode no tiene modelos de chat disponibles.")
-        if self.model is not None:
-            return models, self.model if self.model in models else None
-        data = self._json(self._request(client, "GET", "/api/model/default")).get("data")
-        default = StudioModel.from_server(data)
-        return models, default.key if default and default.key in models else None
+        return models
 
     def list_models(self) -> dict:
         with self._client() as client:
-            models, default = self._catalog(client)
+            models = self._catalog(client)
         # Do not relay provider payloads (they can include credentials and paths).
-        return {"models": list(models), "default_model": default}
+        return {"models": list(models), "default_model": self.model if self.model in models else None}
 
     def _generate(self, client: httpx.Client, model: StudioModel, prompt: str, system: str,
                   *, verify: bool = False) -> str:
@@ -156,6 +163,7 @@ class OpenCodeServerProvider:
             # session history, not the agent loop. This fresh session is empty.
             data = self._json(self._request(
                 client, "POST", f"{path}/generate",
+                generation_model=model,
                 json={"prompt": f"{system}\n\nTexto del usuario:\n{prompt}"},
             )).get("data")
             text = data.get("text") if isinstance(data, dict) else None
@@ -181,11 +189,14 @@ class OpenCodeServerProvider:
         return self._complete(prompt, system)
 
     def _complete(self, prompt: str, system: str, *, verify: bool = False) -> str:
+        if self.model is None:
+            raise AIModelRequired("Pulsa Cargar modelos y elige un modelo de OpenCode antes de continuar.")
         with self._client() as client:
-            models, default = self._catalog(client)
-            if default is None:
-                raise AIError("El modelo de OpenCode solicitado o predeterminado no está disponible. Elige uno del catálogo.")
-            return self._generate(client, models[default], prompt, system, verify=verify)
+            models = self._catalog(client)
+            if self.model not in models:
+                raise AIModelRequired("El modelo de OpenCode solicitado no está disponible. "
+                                      "Pulsa Cargar modelos y elige otro.")
+            return self._generate(client, models[self.model], prompt, system, verify=verify)
 
     def check_status(self) -> dict:
         marker = self._complete(

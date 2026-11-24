@@ -914,3 +914,23 @@ las fases anteriores.
   múltiples pistas de vídeo.
 - **Próximo paso:** actualizar ambas PC a la misma revisión, instalar dependencias y comprobar
   traslado con respaldo v2 incluidas las copias de medios. Instrucciones en `docs/GUIA_EJECUCION.md`.
+
+## Seguimiento de Fase 9b — Selección explícita en OpenCode (2026-11-24)
+
+- **Estado:** implementada y verificada en la PC del trabajo.
+- **Commit de cierre:** `Exige una selección explícita de modelo en OpenCode`.
+- OpenCode usa el modelo elegido en Studio o `GHS_OPENCODE_MODEL`, nunca el predeterminado
+  anunciado por el servidor. Sin un modelo válido devuelve `AI_MODEL_REQUIRED`. Un 503 de
+  generación devuelve `AI_PROVIDER_UNAVAILABLE` con el ID validado del modelo y sin el cuerpo
+  de error del proveedor. Se mantienen el loopback, la contraseña, la sesión sin herramientas,
+  una sola generación y la eliminación de la sesión de prueba.
+- Extensiones y Proyectos recuerdan el último modelo elegido y lo validan al cargar el catálogo.
+  El aviso del plan identifica el destino y los datos que salen del equipo. La etiqueta de
+  Claude usa solo configuración local; no cambia la ejecución de Claude Code.
+- **Verificado:** 153 pruebas de backend pasaron, 2 integraciones de edición omitidas; lint,
+  TypeScript y 9 pruebas Node con `--experimental-strip-types` pasaron. Edge con respuestas
+  interceptadas verificó la selección, la recarga, el modelo retirado, almacenamiento bloqueado,
+  el aviso del plan y los errores en la tarjeta, sin hacer inferencia. `verify_phase9b.py --model
+  openai/gpt-6.2-sol` generó el marcador real sin herramientas, confirmó la auditoría sin
+  contenido y eliminó la sesión con HTTP 204; no consultó `/api/model/default`.
+- **No verificado:** no se envió ningún proyecto ni nota real; no se volvió a invocar Claude Code.

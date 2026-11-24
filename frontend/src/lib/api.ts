@@ -112,15 +112,18 @@ export const aiProviders = { claude: "Claude Code", opencode: "OpenCode" } as co
 export type AIProvider = keyof typeof aiProviders;
 export type AIStatus = { ready: true; cli_version?: string; tools_disabled: boolean } |
   { ready: false; code: string; message: string };
+// default_model is Studio's configured model, not OpenCode's advertised default.
 export type AIModelList = { models: string[]; default_model: string | null };
 type AISelection = { provider: AIProvider; model?: string };
 export type AICue = { id: string; start_seconds: number; duration_seconds: number; text: string };
 export type SubtitleMode = "generate" | "correct";
 const aiAction = { "X-GHS-AI-Action": "confirm" };
 export const ai = {
-  status: async (provider: AIProvider) => (await request<{ providers: Record<AIProvider, AIStatus> }>(
-    `/ai/status?provider=${provider}`, { headers: aiAction })).providers[provider],
+  status: async (provider: AIProvider, model?: string) => (await request<{ providers: Record<AIProvider, AIStatus> }>(
+    `/ai/status?provider=${provider}${model ? `&model=${encodeURIComponent(model)}` : ""}`,
+    { headers: aiAction })).providers[provider],
   models: () => request<AIModelList>("/ai/models", { headers: aiAction }),
+  claudeModel: () => request<{ model: string | null }>("/ai/claude-model"),
   script: (text: string, selection: AISelection, projectId: string) => request<{ text: string }>("/ai/script", {
     ...json("POST", { text, ...selection, project_id: projectId, confirmed: true }), headers: aiAction,
   }),

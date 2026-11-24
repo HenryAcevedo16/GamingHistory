@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { ai, aiProviders, ApiError, type AICue, type AIModelList, type AIProvider, type SubtitleMode } from "@/lib/api";
+import { modelFromCatalog, rememberOpenCodeModel } from "@/lib/ai-model-selection";
 import { field, message, panel, Problem } from "./studio-ui";
 
 type Suggestion = { kind: "script"; text: string } | { kind: "subtitles"; text: string; cues: AICue[] };
@@ -32,11 +33,29 @@ export function AIAssistant({ projectId, plan, editorBusy, applyPlan, applySubti
   const provider = selectedProvider ?? storedProvider;
   const [catalog, setCatalog] = useState<AIModelList | null>(null);
   const [model, setModel] = useState("");
+  const [claudeDestination, setClaudeDestination] = useState<{ model: string | null } | "unknown" | null>(null);
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [pending, setPending] = useState<"generate" | "apply" | "models" | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const canSend = provider === "claude" || Boolean(catalog && model);
+  const showClaudeDestination = provider === "claude" && Boolean(script.trim());
+  const canSendPlan = canSend && (provider !== "claude" || claudeDestination !== null);
+  const planDestination = provider === "opencode" ? `${model} (vía OpenCode)` :
+    claudeDestination === null ? "Anthropic · Claude Code (consultando modelo…)" :
+      claudeDestination === "unknown" ? "Anthropic · Claude Code (ID de modelo no disponible)" :
+        claudeDestination.model ? `Anthropic · ${claudeDestination.model} (vía Claude Code)` :
+          "Anthropic · modelo predeterminado de Claude Code";
+
+  useEffect(() => {
+    if (!showClaudeDestination || claudeDestination !== null) return;
+    let active = true;
+    void ai.claudeModel().then(
+      (destination) => { if (active) setClaudeDestination(destination); },
+      () => { if (active) setClaudeDestination("unknown"); },
+    );
+    return () => { active = false; };
+  }, [showClaudeDestination, claudeDestination]);
 
   function changeProvider(value: AIProvider) {
     setSelectedProvider(value); setSuggestion(null); setError(""); setNotice("");
@@ -48,7 +67,7 @@ export function AIAssistant({ projectId, plan, editorBusy, applyPlan, applySubti
     try {
       const result = await ai.models();
       setCatalog(result);
-      setModel(result.models.includes(model) ? model : result.default_model ?? "");
+      setModel(modelFromCatalog(result, model));
     } catch (failure) {
       setCatalog(null); setModel("");
       setError(failure instanceof ApiError ? `${failure.code}: ${failure.message}` : message(failure));
@@ -56,6 +75,7 @@ export function AIAssistant({ projectId, plan, editorBusy, applyPlan, applySubti
   }
 
   async function generate(kind: Suggestion["kind"]) {
+    if (!canSend || (kind === "script" && !canSendPlan)) return;
     setPending("generate"); setSuggestion(null); setError(""); setNotice("");
     try {
       const selection = { provider, model: provider === "opencode" ? model : undefined };
@@ -101,7 +121,10 @@ export function AIAssistant({ projectId, plan, editorBusy, applyPlan, applySubti
         </Button>
         {catalog && <label className="grid max-w-full gap-1 text-sm">Modelo de OpenCode
           <select className={`${field} max-w-full`} value={model} disabled={Boolean(pending)}
-            onChange={(event) => { setModel(event.target.value); setSuggestion(null); setError(""); setNotice(""); }}>
+            onChange={(event) => {
+              setModel(event.target.value); rememberOpenCodeModel(event.target.value);
+              setSuggestion(null); setError(""); setNotice("");
+            }}>
             <option value="" disabled>Elige un modelo</option>
             {catalog.models.map((id) => <option key={id} value={id}>{id}</option>)}
           </select>
@@ -119,8 +142,13 @@ export function AIAssistant({ projectId, plan, editorBusy, applyPlan, applySubti
         <label htmlFor="ai-script" className="block text-sm">Texto de guion</label>
         <textarea id="ai-script" className={`${field} w-full`} rows={5} value={script} maxLength={12000} disabled={Boolean(pending)}
           onChange={(event) => { setScript(event.target.value); if (suggestion?.kind === "script") setSuggestion(null); }} />
-        <p id="ai-plan-notes" className="text-xs text-muted-foreground">Al pedir un plan de guion y cortes, el proveedor recibe el nombre de archivo, tipo, duración y nota guardada de cada recurso. No se envían rutas ni archivos.</p>
-        <Button type="button" variant="outline" aria-describedby="ai-plan-notes" disabled={editorBusy || !canSend || Boolean(pending) || !script.trim()} onClick={() => void generate("script")}>Enviar guion y sugerir estructura</Button>
+        <p id="ai-plan-notes" className="text-xs text-muted-foreground">
+          {provider === "opencode" && !model ? `${catalog ? "Elige un modelo del catálogo" : "Pulsa Cargar modelos y elige un modelo"} para ver el destino. No se enviará texto hasta elegirlo.` :
+            <>Al pedir un plan, el guion y el nombre de archivo, tipo, duración y nota guardada de cada recurso salen de este equipo.
+              {" "}Destino: <strong>{planDestination}</strong>.
+              {" "}No se envían rutas ni archivos.</>}
+        </p>
+        <Button type="button" variant="outline" aria-describedby="ai-plan-notes" disabled={editorBusy || !canSendPlan || Boolean(pending) || !script.trim()} onClick={() => void generate("script")}>Enviar guion y sugerir estructura</Button>
       </div>
       <div className="min-w-0 space-y-2">
         <label htmlFor="ai-srt" className="block text-sm">Subtítulos o transcripción temporizada (SRT)</label>

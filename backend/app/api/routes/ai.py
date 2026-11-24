@@ -200,6 +200,13 @@ def models(request: Request, response: Response, session: Session = Depends(get_
         return _opencode().list_models()
 
 
+@router.get("/claude-model")
+def claude_model(response: Response) -> dict[str, str | None]:
+    """Report Studio's local override without querying or invoking Claude Code."""
+    response.headers["Cache-Control"] = "no-store"
+    return {"model": settings.ai_model}
+
+
 @router.post("/script", response_model=ScriptSuggestion)
 def suggest_script(payload: GenerateRequest, request: Request, response: Response,
                    session: Session = Depends(get_session)) -> ScriptSuggestion:

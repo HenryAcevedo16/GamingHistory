@@ -144,40 +144,53 @@ exclusivamente personal y local, no para distribución o servicio compartido.
    Por defecto Studio usa `http://127.0.0.1:4096`. `GHS_OPENCODE_SERVER_URL` solo
    admite HTTP a `127.0.0.1`; el arranque automático siempre usa el puerto 4096.
    `GHS_OPENCODE_MODEL` es opcional: acepta el ID `proveedor/modelo` del catálogo.
-   Si no se configura, Studio intenta usar el predeterminado anunciado por OpenCode.
+   Si no se configura, debes cargar el catálogo y elegir un modelo en Studio.
+   Studio nunca toma el predeterminado anunciado por el servidor OpenCode.
 3. Desde la raíz, corre `.\iniciar-studio.ps1 -ConOpenCode` (puedes añadir
    `-SinVectCut`). El lanzador lee la contraseña desde `backend/.env`, la pasa
    solo en el entorno del proceso como `OPENCODE_SERVER_PASSWORD` y oculta la
    salida de `serve`, que puede imprimir el secreto. Si Studio ya estaba abierto,
    reinicia también el backend para cargar el `.env`. No expongas `serve` en la red.
-4. En **Extensiones**, pulsa **Verificar conexión** en la tarjeta de OpenCode.
-   Envía un mensaje fijo al modelo predeterminado, sin información del proyecto.
-   En el asistente de un proyecto, elige **OpenCode**, pulsa **Cargar modelos** y
-   selecciona el que quieras usar. Para no usar el predeterminado de otro servicio,
-   puedes configurar `GHS_OPENCODE_MODEL` con el ID de tu modelo de ChatGPT. Cambiar de
-   proveedor o de modelo no envía texto ni ejecuta comprobaciones. Solo el proveedor
-   se recuerda en ese navegador.
+4. En **Extensiones → OpenCode**, usa **Cargar modelos** para elegir uno, luego pulsa
+   **Verificar conexión**. Envía un mensaje fijo al modelo elegido, o a
+   `GHS_OPENCODE_MODEL` si no elegiste otro; no envía información del proyecto.
+   En el asistente del proyecto, elige **OpenCode** y pulsa **Cargar modelos**.
+   Se recuerdan el proveedor y el último modelo de OpenCode en ese navegador;
+   el modelo guardado solo se reutiliza si sigue en el catálogo. Si desapareció,
+   debes elegir otro. Cargar el catálogo o cambiar la selección no envía texto al
+   proveedor. Antes de enviar un plan, revisa el modelo y el aviso sobre el
+   guion y las notas que salen del equipo. Para Claude Code, el aviso muestra
+   `GHS_AI_MODEL` si lo configuraste; si no, el modelo lo determina la CLI.
 
 **Si no responde:** `AI_SERVER_UNAVAILABLE` indica que el proceso no escucha o
 la conexión se interrumpió; revisa el puerto con `Get-NetTCPConnection -LocalPort 4096`
 y vuelve a arrancar con `-ConOpenCode`. `AI_AUTH_FAILED` indica falta/rechazo de la
 contraseña del servidor, un servidor sin protección, o autenticación ausente o
 rechazada por el proveedor del modelo: lee el detalle antes de cambiar el `.env`
-o repetir `opencode auth login`. Si no hay modelo, vuelve a cargar el catálogo;
-si el predeterminado configurado ya no aparece, elige otro ID disponible. Para
-`AI_TIMEOUT`, revisa la conexión del modelo o ajusta `GHS_AI_TIMEOUT_SECONDS`.
+o repetir `opencode auth login`. `AI_MODEL_REQUIRED` pide cargar el catálogo y
+elegir un modelo válido. `AI_PROVIDER_UNAVAILABLE` identifica el modelo con el
+que falló la generación (HTTP 503); reintenta más tarde o elige otro.
+Para `AI_TIMEOUT`, revisa la conexión del modelo o ajusta `GHS_AI_TIMEOUT_SECONDS`.
 
 Prueba real con `opencode serve` en ejecución y sin tocar la base de proyectos:
 
-```powershell
-.\backend\.venv\Scripts\python.exe scripts\verify_phase9b.py
-.\backend\.venv\Scripts\python.exe scripts\verify_phase9b.py --suggestions
+```cmd
+backend\.venv\Scripts\python.exe scripts\verify_phase9b.py
+backend\.venv\Scripts\python.exe scripts\verify_phase9b.py --suggestions
 ```
 
-Usa `--model <proveedor/modelo>` para elegir un modelo distinto. Si no puede
+Usa `--model <proveedor/modelo>` para elegir uno explícitamente; si se omite,
+el script requiere `GHS_OPENCODE_MODEL`. Si no puede
 contactar al servidor, autenticar o generar, termina con **No verificado** y
 código distinto de cero. Al enviar texto, la inferencia puede salir de la PC
 hacia el servicio del modelo elegido; lo local es la conexión de Studio a OpenCode.
+
+Para comprobar solo la interfaz sin enviar texto a un proveedor, con Studio
+en marcha, Python Playwright y Edge instalados:
+
+```cmd
+python scripts\verify_opencode_selection_ui.py --web http://127.0.0.1:3000
+```
 
 ## 8. Importar y ordenar recursos
 

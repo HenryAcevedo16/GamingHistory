@@ -9,7 +9,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from app.ai import opencode
-from app.ai.errors import AIAuthFailed, AIError, AIServerUnavailable, AITimeout
+from app.ai.errors import (
+    AIAuthFailed, AIError, AIModelRequired, AIProviderUnavailable, AIServerUnavailable, AITimeout,
+)
 from app.ai.opencode import OpenCodeServerProvider
 
 MODEL = {"providerID": "fixture", "id": "fixture-chat", "enabled": True, "type": "chat"}
@@ -67,15 +69,14 @@ def server():
 
 def test_catalog_and_transient_generation(server):
     url, _, calls = server
-    provider = OpenCodeServerProvider(url, "test-password", 2)
+    provider = OpenCodeServerProvider(url, "test-password", 2, default_model=KEY)
     assert provider.list_models() == {"models": [KEY], "default_model": KEY}
-    assert all(method == "GET" for method, *_ in calls)
+    assert [entry[:2] for entry in calls] == [("GET", "/api/info"), ("GET", "/api/model")]
     calls.clear()
     assert provider.generate_text("entrada", "sistema") == "respuesta real del fixture"
     assert calls == [
         ("GET", "/api/info", None, None),
         ("GET", "/api/model", AUTH, None),
-        ("GET", "/api/model/default", AUTH, None),
         ("POST", "/api/session", AUTH, {"title": "Gaming History Studio", "model": {
             "providerID": "fixture", "id": "fixture-chat"}, "permissions": DENIED}),
         ("POST", SESSION + "/generate", AUTH, {"prompt": "sistema\n\nTexto del usuario:\nentrada"}),
@@ -83,13 +84,25 @@ def test_catalog_and_transient_generation(server):
     ]
 
 
+def test_missing_model_does_not_use_advertised_default(server):
+    url, _, calls = server
+    provider = OpenCodeServerProvider(url, "test-password", 2)
+    assert provider.list_models() == {"models": [KEY], "default_model": None}
+    assert [entry[:2] for entry in calls] == [("GET", "/api/info"), ("GET", "/api/model")]
+    calls.clear()
+    for operation in (provider.check_status, lambda: provider.generate_text("a", "b")):
+        with pytest.raises(AIModelRequired, match="Cargar modelos"):
+            operation()
+    assert calls == []
+
+
 def test_explicit_model_overrides_default_and_unknown_never_sends(server):
     url, _, calls = server
     assert OpenCodeServerProvider(url, "test-password", 2, KEY, default_model="invalid").generate_text("a", "b")
     calls.clear()
-    with pytest.raises(AIError, match="no está disponible"):
+    with pytest.raises(AIModelRequired, match="no está disponible"):
         OpenCodeServerProvider(url, "test-password", 2, "invalid").generate_text("a", "b")
-    assert not any(method == "POST" for method, *_ in calls)
+    assert [entry[:2] for entry in calls] == [("GET", "/api/info"), ("GET", "/api/model")]
 
 
 @pytest.mark.parametrize("value", ["http://localhost:4096", "http://127.0.0.1.evil.test", "http://[::1]",
@@ -141,12 +154,24 @@ def test_down_and_timeout(server, monkeypatch):
         OpenCodeServerProvider(url, "test-password", 2).list_models()
 
 
-def test_generation_error_sanitized_and_session_deleted(server):
+@pytest.mark.parametrize("status", [500, 503])
+def test_generation_error_sanitized_and_session_deleted(server, status):
     url, responses, calls = server
-    responses["POST", SESSION + "/generate"] = (500, {"data": {"status": 401, "secret": "not for clients"}})
+    responses["POST", SESSION + "/generate"] = (status, {"data": {"status": 401, "secret": "not for clients"}})
     with pytest.raises(AIAuthFailed, match="modelo.*autenticación") as error:
         OpenCodeServerProvider(url, "test-password", 2, KEY).generate_text("a", "b")
     assert "not for clients" not in str(error.value)
+    assert calls[-1][:2] == ("DELETE", SESSION)
+
+
+@pytest.mark.parametrize("body", [{"secret": "not for clients"}, None])
+def test_generation_503_is_typed_without_raw_body_or_retry(server, body):
+    url, responses, calls = server
+    responses["POST", SESSION + "/generate"] = (503, body)
+    with pytest.raises(AIProviderUnavailable, match=f"{KEY}.*HTTP 503") as error:
+        OpenCodeServerProvider(url, "test-password", 2, KEY).check_status()
+    assert "not for clients" not in str(error.value)
+    assert [entry[:2] for entry in calls].count(("POST", SESSION + "/generate")) == 1
     assert calls[-1][:2] == ("DELETE", SESSION)
 
 

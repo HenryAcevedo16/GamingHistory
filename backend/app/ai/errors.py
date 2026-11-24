@@ -29,3 +29,13 @@ class AIServerUnavailable(AIError):
 class AIAuthFailed(AIError):
     code = "AI_AUTH_FAILED"
     status_code = 503
+
+
+class AIModelRequired(AIError):
+    code = "AI_MODEL_REQUIRED"
+    status_code = 422
+
+
+class AIProviderUnavailable(AIError):
+    code = "AI_PROVIDER_UNAVAILABLE"
+    status_code = 503

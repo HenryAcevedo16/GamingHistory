@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.api.routes import ai
-from app.ai.errors import AIServerUnavailable
+from app.ai.errors import AIProviderUnavailable, AIServerUnavailable
+from app.ai.opencode import OpenCodeServerProvider
 from app.core.db import get_session
 from app.editing.subtitles import parse_srt
 from app.main import app
@@ -211,3 +212,59 @@ def test_closed_provider_selection_and_no_prompt_auditing(studio, monkeypatch):
         assert len(rows) == 8
         assert {r.plugin_id for r in rows} == {"opencode-ai"}
         assert {r.detail for r in rows} == {"", "AI_SENSITIVE_INPUT"}
+
+
+def test_opencode_requires_model_for_status_and_generation(studio, monkeypatch):
+    client, engine = studio
+    monkeypatch.setattr(ai.settings, "opencode_model", None)
+    monkeypatch.setattr(OpenCodeServerProvider, "_client", lambda *_: pytest.fail("No OpenCode request without model"))
+    status = client.get("/api/ai/status?provider=opencode", headers=CONFIRM).json()["providers"]["opencode"]
+    assert status["ready"] is False and status["code"] == "AI_MODEL_REQUIRED"
+    assert "Cargar modelos" in status["message"]
+    common = {"text": SRT, "confirmed": True, "provider": "opencode"}
+    for url, extras in (("script", {}), ("subtitles", {"mode": "correct"})):
+        response = client.post(f"/api/ai/{url}", headers=CONFIRM, json={**common, **extras})
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "AI_MODEL_REQUIRED"
+    with Session(engine) as session:
+        errors = [r.detail for r in session.exec(select(AuditLog)).all() if r.status == "error"]
+        assert errors == ["AI_MODEL_REQUIRED"] * 3
+
+
+def test_opencode_provider_unavailability_reaches_status_and_generation(studio, monkeypatch):
+    client, engine = studio
+
+    class OpenCode:
+        def __init__(self, model):
+            assert model == "fixture/chat"
+
+        def check_status(self):
+            raise AIProviderUnavailable("El proveedor de fixture/chat no está disponible (HTTP 503).")
+
+        def generate_text(self, prompt, system):
+            self.check_status()
+
+    monkeypatch.setattr(ai, "_opencode", OpenCode)
+    status = client.get("/api/ai/status?provider=opencode&model=fixture%2Fchat", headers=CONFIRM)
+    assert status.json()["providers"]["opencode"]["code"] == "AI_PROVIDER_UNAVAILABLE"
+    response = client.post("/api/ai/script", headers=CONFIRM, json={
+        "text": "Texto de prueba", "provider": "opencode", "model": "fixture/chat", "confirmed": True,
+    })
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "AI_PROVIDER_UNAVAILABLE"
+    assert "fixture/chat" in response.json()["error"]["message"]
+    with Session(engine) as session:
+        errors = [r.detail for r in session.exec(select(AuditLog)).all() if r.status == "error"]
+        assert errors == ["AI_PROVIDER_UNAVAILABLE"] * 2
+
+
+@pytest.mark.parametrize("model", ["sonnet", None])
+def test_claude_plan_destination_is_local_metadata_only(studio, monkeypatch, model):
+    client, engine = studio
+    monkeypatch.setattr(ai.settings, "ai_model", model)
+    monkeypatch.setattr(ai, "_provider", lambda: pytest.fail("Do not invoke Claude Code for metadata"))
+    response = client.get("/api/ai/claude-model")
+    assert response.json() == {"model": model}
+    assert response.headers["Cache-Control"] == "no-store"
+    with Session(engine) as session:
+        assert session.exec(select(AuditLog)).all() == []

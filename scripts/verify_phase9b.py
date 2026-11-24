@@ -29,7 +29,7 @@ def require_response(response):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", help="ID proveedor/modelo del catálogo. Si se omite, usa el predeterminado.")
+    parser.add_argument("--model", help="ID proveedor/modelo del catálogo. Si se omite, usa GHS_OPENCODE_MODEL.")
     parser.add_argument("--suggestions", action="store_true", help="También prueba guion y SRT con texto sintético.")
     args = parser.parse_args()
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -49,7 +49,7 @@ def main() -> int:
             catalog = require_response(with_client.get("/api/ai/models", headers=HEADERS))
             model = args.model or catalog["default_model"]
             if model not in catalog["models"]:
-                raise RuntimeError("No hay modelo seleccionado disponible; revisa GHS_OPENCODE_MODEL o usa --model.")
+                raise RuntimeError("AI_MODEL_REQUIRED: Elige un modelo del catálogo mediante GHS_OPENCODE_MODEL o --model.")
             params = {"provider": "opencode", "model": model}
             status = require_response(with_client.get("/api/ai/status", params=params, headers=HEADERS))["providers"]["opencode"]
             if not status["ready"]:
