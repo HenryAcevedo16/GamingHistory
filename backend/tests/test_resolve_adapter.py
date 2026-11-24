@@ -1,12 +1,20 @@
+import io
+import json
+from unittest.mock import Mock
+
 import pytest
-from sqlmodel import Session, create_engine
+from sqlmodel import Session, create_engine, select
 
 from app.core import db
 from app.core.errors import CapabilityNotAvailable, InvalidOperation
 from app.editing.adapter import EditorOperation
 from app.editing.adapters.resolve import ResolveAdapter, ResolveConverter
-from app.editing.adapters.resolve_bridge import ResolveBridgeClient, ResolveBridgeUnavailable
+from app.editing.adapters import resolve_bridge
+from app.editing.adapters.resolve_bridge import (
+    ResolveBridgeClient, ResolveBridgeMethodNotAllowed, ResolveBridgeUnavailable,
+)
 from app.editing.timeline import Asset, Clip, Project, SubtitleCue, SubtitleTrack, VideoTrack
+from app.models.audit import AuditLog
 from app.models.plugin import PluginState
 
 
@@ -28,6 +36,8 @@ def test_paths_outside_resolve_policy_never_reach_bridge_write(tmp_path, monkeyp
     monkeypatch.setattr(adapter, "_remember_health", lambda _: None)
     with pytest.raises(InvalidOperation, match="fuera de las raíces"):
         adapter.import_media([str(media)])
+    with pytest.raises(InvalidOperation, match="fuera de las raíces"):
+        adapter.render_final("current", settings={"TargetDir": str(tmp_path), "CustomName": "render"})
     with pytest.raises(InvalidOperation, match="CustomName"):
         adapter.render_final("current", settings={"TargetDir": str(root), "CustomName": "../outside"})
     with pytest.raises(CapabilityNotAvailable):
@@ -38,6 +48,55 @@ def test_bridge_rejects_non_loopback():
     client = ResolveBridgeClient({"host": "192.0.2.1", "port": 49632, "token": "test-only"})
     with pytest.raises(ResolveBridgeUnavailable, match="127.0.0.1"):
         client.health()
+
+
+def test_bridge_signs_and_sends_allowed_method(monkeypatch):
+    config = {"host": "127.0.0.1", "port": 49632, "token": "test-only"}
+    socket = Mock()
+    connect = Mock(return_value=socket)
+    monkeypatch.setattr(resolve_bridge.socket, "create_connection", connect)
+
+    def reply(_mode):
+        request = json.loads(socket.sendall.call_args.args[0])
+        assert request["operation"] == "call"
+        assert request["arguments"] == {"target": "h:1", "method": "GetName", "args": []}
+        assert request["signature"] == resolve_bridge.sign_request(config["token"], request)
+        return io.BytesIO((json.dumps({"id": request["id"], "ok": True,
+                                       "result": {"value": "Example"}}) + "\n").encode())
+
+    socket.makefile.side_effect = reply
+    assert ResolveBridgeClient(config).call("h:1", "GetName") == "Example"
+    connect.assert_called_once()
+    socket.sendall.assert_called_once()
+
+
+def test_bridge_denies_and_audits_before_signing_or_sending(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit.db'}")
+    monkeypatch.setattr(db, "engine", engine)
+    db.init_db()
+    load_config, sign, connect = Mock(), Mock(), Mock()
+    monkeypatch.setattr(resolve_bridge, "load_bridge_config", load_config)
+    monkeypatch.setattr(resolve_bridge, "sign_request", sign)
+    monkeypatch.setattr(resolve_bridge.socket, "create_connection", connect)
+    client = ResolveBridgeClient()
+    attempts = (
+        lambda: client.call("project_manager", "DeleteProject", "sensitive-argument"),
+        lambda: client.named("call", {"method": "GetNameExtra"}),
+        lambda: client.request("call", {"method": ["GetName"]}),
+        lambda: client.request("call"),
+    )
+    for attempt in attempts:
+        with pytest.raises(ResolveBridgeMethodNotAllowed) as error:
+            attempt()
+        assert error.value.bridge_code == "method_not_allowed"
+    load_config.assert_not_called()
+    sign.assert_not_called()
+    connect.assert_not_called()
+    with Session(engine) as session:
+        denied = session.exec(select(AuditLog)).all()
+    assert [(row.plugin_id, row.action, row.status, row.detail) for row in denied] == [
+        ("davinci-resolve", "bridge.call", "denied", "method_not_allowed"),
+    ] * len(attempts)
 
 
 def test_resolve_plan_keeps_source_time_and_reports_unexported_subtitles():

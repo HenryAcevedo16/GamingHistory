@@ -15,10 +15,18 @@ from sqlmodel import create_engine
 from app.core import db
 from app.editing.adapter import execute_operation
 from app.editing.adapters.resolve import ResolveConverter
-from app.editing.adapters.resolve_bridge import ResolveBridgeCallError
+from app.editing.adapters.resolve_bridge import ResolveBridgeCallError, ResolveBridgeClient
 from app.editing.registry import default_registry
 from app.editing.timeline import Asset, AudioTrack, Clip, Project, VideoTrack
 from app.main import app
+
+
+class _SmokeProbe(ResolveBridgeClient):
+    # Fixture setup, readback and cleanup only; the adapter retains its own list.
+    _ALLOWED_CALL_METHODS = frozenset({
+        "GetStartFrame", "GetTrackCount", "GetItemListInTrack", "GetDuration",
+        "SetCurrentRenderFormatAndCodec", "LoadProject",
+    })
 
 
 def _probe(path):
@@ -57,6 +65,7 @@ def test_resolve_free_end_to_end(tmp_path, monkeypatch, caplog, capsys):
         assert api.get(f"{url}/tools").json()["tools"]
         adapter = default_registry.create("davinci-resolve")
         bridge = adapter.bridge
+        probe = _SmokeProbe()
         health = bridge.health()
         previous = health["current_project"]
         assert set(health["operations"]) == {
@@ -93,23 +102,23 @@ def test_resolve_free_end_to_end(tmp_path, monkeypatch, caplog, capsys):
             plan = converter.convert(unified)
             assert plan.complete
             handle = timeline["handle"]
-            start = bridge.call(handle, "GetStartFrame")
+            start = probe.call(handle, "GetStartFrame")
             for track in plan.payload["tracks"]:
-                while bridge.call(handle, "GetTrackCount", track["kind"]) < track["index"]:
+                while probe.call(handle, "GetTrackCount", track["kind"]) < track["index"]:
                     run("add_track", timeline_id=handle, track={"kind": track["kind"]})
                 for clip in track["clips"]:
                     placement = converter.clip_placement(track, clip, source_fps=float(source_probe[0]), timeline_start=start)
                     run("add_clip", timeline_id=handle, clip={"media_handle": media[0]["handle"], **placement})
             assert (placement["start_frame"], placement["end_frame"], placement["track_index"]) == (0, 24, 2)
-            v1 = bridge.call(handle, "GetItemListInTrack", "video", 1) or []
-            v2 = bridge.call(handle, "GetItemListInTrack", "video", 2) or []
+            v1 = probe.call(handle, "GetItemListInTrack", "video", 1) or []
+            v2 = probe.call(handle, "GetItemListInTrack", "video", 2) or []
             assert not v1 and len(v2) == 1
-            duration = bridge.call(v2[0]["__handle__"], "GetDuration")
+            duration = probe.call(v2[0]["__handle__"], "GetDuration")
             assert duration == 24
             assert bridge.named("save_project")["saved"] is True
             selected = api.post("/api/router/decide", json={"operation": "professional_edit"}).json()["selected"]
             assert selected["plugin_id"] == "davinci-resolve" and selected["executable"]
-            assert bridge.call(project["id"], "SetCurrentRenderFormatAndCodec", "mov", "DNxHRLB") is True
+            assert probe.call(project["id"], "SetCurrentRenderFormatAndCodec", "mov", "DNxHRLB") is True
             job = run("render_final", timeline_id=timeline["handle"], settings={"TargetDir": str(output), "CustomName": "result", "SelectAllFrames": True, "ExportVideo": True, "ExportAudio": False})
             deadline = time.monotonic() + 60
             while time.monotonic() < deadline:
@@ -138,6 +147,6 @@ def test_resolve_free_end_to_end(tmp_path, monkeypatch, caplog, capsys):
                   f"Resolve V1={len(v1)}, V2={len(v2)}, V2 clip duration={duration} frames")
         finally:
             if previous:
-                restored = bridge.call("project_manager", "LoadProject", previous)
+                restored = probe.call("project_manager", "LoadProject", previous)
                 if isinstance(restored, dict) and restored.get("__handle__"):
                     bridge.named("release_handles", {"handles": [restored["__handle__"]]})

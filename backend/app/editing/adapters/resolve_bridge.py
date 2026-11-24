@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import socket
@@ -23,13 +24,18 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
+from sqlmodel import Session
+
 from app.core.errors import CapabilityNotAvailable, DependencyUnavailable, InvalidOperation
+from app.models.audit import AuditLog
 
 PROTOCOL_VERSION = "1.0"
 MAX_REQUEST_BYTES = 1_048_576
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "davinci-resolve-mcp" / "bridge.json"
 ENV_CONFIG_PATH = "DAVINCI_RESOLVE_BRIDGE_CONFIG"
+logger = logging.getLogger(__name__)
 
 
 class ResolveBridgeUnavailable(DependencyUnavailable):
@@ -45,6 +51,28 @@ class ResolveBridgeCallError(InvalidOperation):
             details={"bridge_code": code, **(details or {})},
         )
         self.bridge_code = code
+
+
+class ResolveBridgeMethodNotAllowed(ResolveBridgeCallError):
+    """The adapter refused a call before signing or contacting Resolve."""
+
+    def __init__(self) -> None:
+        super().__init__("method_not_allowed", "El método no está permitido por el adaptador.")
+
+
+def _audit_denied_call() -> None:
+    from app.core.db import engine
+
+    # Do not persist caller-controlled method names, targets or argument values.
+    try:
+        with Session(engine) as session:
+            session.add(AuditLog(
+                plugin_id="davinci-resolve", action="bridge.call", status="denied",
+                detail="method_not_allowed",
+            ))
+            session.commit()
+    except SQLAlchemyError:
+        logger.warning("davinci-resolve bridge.call denied: method_not_allowed (audit DB unavailable)")
 
 
 def config_path() -> Path:
@@ -91,6 +119,14 @@ def sign_request(token: str, request: dict[str, Any]) -> str:
 class ResolveBridgeClient:
     """One signed request per connection; honest about every failure."""
 
+    # Exact method names used by ResolveAdapter. The bridge itself is more permissive.
+    _ALLOWED_CALL_METHODS = frozenset({
+        "AddRenderJob", "AddTrack", "AppendToTimeline", "CreateEmptyTimeline", "CreateProject",
+        "GetClipList", "GetClipProperty", "GetMediaPool", "GetName", "GetRenderJobStatus",
+        "GetRootFolder", "GetSubFolderList", "ImportMedia", "SetCurrentTimeline",
+        "SetRenderSettings", "StartRendering",
+    })
+
     def __init__(
         self,
         config: dict[str, Any] | None = None,
@@ -107,6 +143,12 @@ class ResolveBridgeClient:
         return self._config
 
     def request(self, operation: str, arguments: dict[str, Any] | None = None) -> Any:
+        args = dict(arguments or {})
+        if operation == "call":
+            method = args.get("method")
+            if type(method) is not str or method not in self._ALLOWED_CALL_METHODS:
+                _audit_denied_call()
+                raise ResolveBridgeMethodNotAllowed()
         config = self.config
         if config.get("host") != "127.0.0.1":
             raise ResolveBridgeUnavailable("El puente debe estar configurado en 127.0.0.1.")
@@ -116,7 +158,7 @@ class ResolveBridgeClient:
             "timestamp": int(time.time()),
             "nonce": secrets.token_urlsafe(24),
             "operation": operation,
-            "arguments": dict(arguments or {}),
+            "arguments": args,
         }
         payload["signature"] = sign_request(config["token"], payload)
         line = (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")

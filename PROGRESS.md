@@ -529,6 +529,11 @@ las fases anteriores.
   públicos; las 15 operaciones son los nombres del protocolo, no los métodos de Resolve.
   `health.policy` → medios bajo `C:\Users\emil-`; salidas bajo `C:\Users\emil-\Movies`.
   El adaptador valida las rutas para sus métodos de importación y render vía `call`.
+- **Endurecimiento del adaptador:** el cliente limita `call` a los 16 métodos que usa
+  ResolveAdapter. Una llamada fuera de la lista devuelve `method_not_allowed` antes de
+  cargar la configuración, firmar o abrir una conexión, y registra `bridge.call: denied`
+  sin guardar datos de la petición. `python -m pytest` con `GHS_RESOLVE_LIVE=1` → **54 passed**,
+  incluidos envío permitido, rechazo auditado, validación de rutas y render real.
 - **Rango de colocación:** `ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=avg_frame_rate,nb_read_frames:format=duration -of default=nw=1 <archivo>`
   → fuente: 48 fotogramas a 24 fps (`2.000000 s`); primer render: 23 fotogramas
   (`0.958333 s`). El recorte previsto era de un segundo, pero `[0, 23)` excluía el
