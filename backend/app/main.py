@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
-from app.api.routes import backups, editing_router, exports, health, plugins, projects, renders
+from app.api.routes import ai, backups, editing_router, exports, health, plugins, projects, renders
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.errors import StudioError
@@ -54,6 +54,7 @@ app.include_router(editing_router.router, prefix=settings.api_prefix)
 app.include_router(renders.router, prefix=settings.api_prefix)
 app.include_router(exports.router, prefix=settings.api_prefix)
 app.include_router(backups.router, prefix=settings.api_prefix)
+app.include_router(ai.router, prefix=settings.api_prefix)
 
 
 @app.exception_handler(StudioError)

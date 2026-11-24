@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -30,6 +31,8 @@ class Settings(BaseSettings):
     workspace_dir: Path = BACKEND_ROOT / "data" / "workspace"
     backup_dir: Path | None = None
     backup_max_bytes: int = 20 * 1024**3
+    ai_timeout_seconds: float = Field(default=60, gt=0, le=300)
+    ai_model: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9._-]{1,100}$")
     log_level: str = "INFO"
 
     @property

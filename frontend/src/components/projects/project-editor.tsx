@@ -8,6 +8,7 @@ import { projects } from "@/lib/api";
 import { emptyTrack, end, historyStep, initialHistory, items, labels, seconds, transform, withItems,
   type Asset, type Item, type Kind, type Project, type Timeline, type Track } from "@/lib/timeline";
 import { ExportPanel, ProjectJobs } from "./project-output";
+import { AIAssistant } from "./ai-assistant";
 import { field, message, panel, Problem, StudioPage } from "./studio-ui";
 import { TimelineBoard } from "./timeline-board";
 
@@ -31,6 +32,7 @@ export function ProjectEditor({ id }: { id: string }) {
 function Editor({ initial }: { initial: Project }) {
   const { id } = initial;
   const [assets, setAssets] = useState(initial.assets);
+  const [scriptPlan, setScriptPlan] = useState(typeof initial.metadata?.script_plan === "string" ? initial.metadata.script_plan : "");
   const [history, setHistory] = useState(() => initialHistory(timelineOf(initial)));
   const [saved, setSaved] = useState(() => JSON.stringify(timelineOf(initial)));
   const [version, setVersion] = useState(0);
@@ -57,17 +59,17 @@ function Editor({ initial }: { initial: Project }) {
   }, [dirty]);
 
   async function task(action: () => Promise<void>, onError: (error: unknown) => void) {
-    if (lock.current) return;
+    if (lock.current) return false;
     lock.current = true;
     setBusy(true);
-    try { await action(); }
-    catch (error) { onError(error); }
+    try { await action(); return true; }
+    catch (error) { onError(error); return false; }
     finally { lock.current = false; setBusy(false); }
   }
   function edit(next: Timeline | "undo" | "redo", nextSelection?: string) {
     const candidate = historyStep(history, next);
-    if (candidate === history || JSON.stringify(candidate.current) === JSON.stringify(timeline)) return;
-    void task(async () => {
+    if (candidate === history || JSON.stringify(candidate.current) === JSON.stringify(timeline)) return Promise.resolve(false);
+    return task(async () => {
       setEditError("");
       const current = await projects.validate(id, candidate.current);
       setHistory({ ...candidate, current });
@@ -166,6 +168,14 @@ function Editor({ initial }: { initial: Project }) {
           <p className="text-sm text-muted-foreground">Selecciona un clip para editar sus tiempos.</p>}
       </section>
     </div>
+    <AIAssistant plan={scriptPlan} editorBusy={busy} applyPlan={(text) => task(async () => {
+      setEditError("");
+      const result = await projects.saveScriptPlan(id, text);
+      setScriptPlan(result.text);
+    }, (error) => setEditError(message(error)))} applySubtitles={(cues) => {
+      const newTrack: Track = { kind: "subtitle", id: crypto.randomUUID(), name: "Subtítulos · Claude", cues };
+      return edit({ ...timeline, tracks: [...timeline.tracks, newTrack] }, cues[0]?.id);
+    }} />
     <ExportPanel id={id} dirty={dirty} version={version} onRender={() => setJobsVersion((value) => value + 1)} />
     <ProjectJobs id={id} version={jobsVersion} />
   </div>;

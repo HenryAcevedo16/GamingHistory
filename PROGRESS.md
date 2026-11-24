@@ -1,7 +1,7 @@
 # PROGRESS — Gaming History Studio
 
 Bitácora operativa del repositorio. Describe lo que existe y lo que se verificó,
-no lo que se planea. Última actualización: **2026-11-23** (Fase 8 verificada en navegador).
+no lo que se planea. Última actualización: **2026-11-23** (Fase 9 verificada con Claude y en navegador).
 
 ## 1. Estado actual
 
@@ -15,6 +15,7 @@ no lo que se planea. Última actualización: **2026-11-23** (Fase 8 verificada e
 | 6 | Integración Descript opcional | Pendiente (sin código) |
 | 7 | Editor visual integrado con la timeline | **Completada y verificada** (Edge, FFmpeg, CapCut local y API viva de Resolve) |
 | 8 | Respaldo local de proyectos y restauración como copia | **Completada y verificada** (Edge, archivos y hashes reales) |
+| 9 | Asistente personal de guion y subtítulos vía Claude Agent SDK | **Completada y verificada** (Claude Code y Edge reales) |
 
 Notas de alcance:
 
@@ -775,3 +776,49 @@ las fases anteriores.
     registra las operaciones y `project_record` conserva el original y las copias verificadas.
 - **Próximo paso:** elegir una carpeta local definitiva desde **Respaldo**; cambiarla no mueve
   los respaldos ya guardados.
+
+## Fase 9 — Asistente personal de texto (2026-11-23, hora local)
+
+- **Estado:** completada para el alcance personal y local.
+- **Commit de cierre:** `fase 9: asistente local con Claude Agent SDK` (commit que incluye esta entrada).
+- **Implementado:**
+  - Proveedor en `backend/app/ai/`, worker aislado del entorno del backend y errores tipados.
+    Usa la instalación de Claude Code, comprueba la sesión `claude.ai` y exige un solo turno
+    exitoso con inventario vacío de herramientas y MCP. Sin API keys, archivos de proyecto,
+    hooks configurados por el usuario ni persistencia de conversaciones de la app.
+  - `GET /api/ai/status` exige la cabecera de acción explícita; `POST /api/ai/script` y
+    `POST /api/ai/subtitles` exigen además confirmación en JSON. No hay polling ni IA al abrir
+    el editor. Auditoría de inicio y resultado en `audit_log` sin prompts ni respuestas.
+  - El editor previsualiza las sugerencias. El guion aceptado se guarda en
+    `project_record` como metadato `script_plan`; el SRT aceptado se agrega como pista
+    nueva mediante la validación habitual de timeline y requiere **Guardar timeline**.
+    Se agregó un parser estricto de SRT que reutiliza `SubtitleCue` y `SubtitleTrack`,
+    porque el repo solo tenía exportación SRT. No hubo tablas nuevas ni migraciones.
+- **Probado realmente (comando → resultado):**
+  - `.venv\Scripts\python.exe -m pip install -r requirements.txt` y `pip check` en `backend/`
+    → SDK **0.2.188** instalado e importable en **Python 3.14.3**; sin dependencias rotas.
+  - `.\backend\.venv\Scripts\python.exe scripts\verify_phase9.py --suggestions` desde la raíz
+    → **Claude Code 2.1.319**, autenticación de la sesión `claude.ai`, sin heredar API key,
+    diagnóstico de `Read` con cero herramientas y cero MCP, guion real y ambos modos SRT
+    validados; auditoría sin texto. Con la CLI fuera del PATH y el perfil de prueba sin
+    binario → HTTP 503 `AI_CLI_NOT_FOUND`, «No verificado», salida 1.
+  - `python -m pytest -o addopts= -q -rs` en `backend/` → **100 passed, 2 skipped** (pruebas
+    opt-in en vivo de Resolve y VectCut). `python -m compileall -q app` → exit 0.
+  - En `frontend/`, `npm run lint`, `npx tsc --noEmit`, `npm run build` → exit 0;
+    `npm test` → 3 pasaron.
+  - Edge **158.0.4370.33** headless, con API `127.0.0.1:8019`, Next `127.0.0.1:3019`
+    y SQLite temporal: ningún envío al abrir Extensiones; solo tres solicitudes de IA
+    tras los tres clics. Guion y corrección SRT reales, vista previa sin escritura, plan
+    persistido al aceptarlo y pista persistida tras añadirla y guardar la timeline.
+- **No probado / limitaciones:**
+  - No verificado en la segunda PC. Sesión ausente, timeout, y respuestas de SDK
+    inválidas cubiertas con pruebas controladas, sin cerrar la sesión habitual.
+  - SRT estricto, no transcribe audio; para generación requiere SRT ya temporizado.
+    El plan propone cortes sin mover clips. Los filtros de texto no detectan todos
+    los secretos arbitrarios: solo se debe pegar material permitido.
+  - Inferencia remota en Anthropic solo con clic explícito; no es una función offline.
+    Las políticas administradas del CLI no se pueden desactivar desde el SDK.
+- **Notas de entorno y estado:** no se modificó `iniciar-studio.ps1`. Las pruebas
+  API/navegador de la fase usaron bases separadas de la habitual.
+- **Próximo paso:** instalar/actualizar Claude Code y repetir `verify_phase9.py` en la
+  segunda PC antes de usarla con material propio.

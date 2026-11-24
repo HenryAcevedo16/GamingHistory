@@ -9,7 +9,7 @@ export type Track = { id: string; name: string; enabled?: boolean; locked?: bool
 export type Timeline = { tracks: Track[]; transitions: { from_clip_id: string; to_clip_id: string }[] };
 export type Asset = { id: string; name: string; kind: string; duration_seconds: number };
 export type ProjectSummary = { id: string; name: string; updated_at: string; assets: number; tracks: number };
-export type Project = Timeline & { id: string; name: string; assets: Asset[] };
+export type Project = Timeline & { id: string; name: string; assets: Asset[]; metadata?: Record<string, unknown> };
 
 export const items = (track: Track) => track.kind === "subtitle" ? track.cues : track.clips;
 export const end = (item: Item) => item.start_seconds + item.duration_seconds;

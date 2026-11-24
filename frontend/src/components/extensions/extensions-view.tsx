@@ -18,6 +18,7 @@ import { PermissionsDialog, type InstallIssue } from "@/components/extensions/pe
 import { PluginCard } from "@/components/extensions/plugin-card";
 import { PluginDetailSheet } from "@/components/extensions/plugin-detail-sheet";
 import { RouterPanel } from "@/components/extensions/router-panel";
+import { AIStatusPanel } from "@/components/extensions/ai-status-panel";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
 import type {
@@ -461,6 +462,7 @@ export function ExtensionsView() {
           />
         </div>
 
+        <AIStatusPanel />
         <RouterPanel revision={data?.generated_at} />
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

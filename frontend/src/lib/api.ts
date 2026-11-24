@@ -31,8 +31,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(`${API_BASE_URL}/api${path}`, {
       cache: "no-store",
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
       ...init,
+      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     });
   } catch {
     throw new ApiError(
@@ -76,6 +76,18 @@ export type Draft = { id: string; path: string };
 const json = (method: "POST" | "PUT", body: unknown) => ({ method, body: JSON.stringify(body) });
 const path = (id: string) => `/projects/${encodeURIComponent(id)}`;
 
+export type AIStatus = { ready: boolean; cli_version: string; sdk_importable: boolean; session_active: boolean; tools_disabled: boolean };
+export type AICue = { id: string; start_seconds: number; duration_seconds: number; text: string };
+export type SubtitleMode = "generate" | "correct";
+const aiAction = { "X-GHS-AI-Action": "confirm" };
+export const ai = {
+  status: () => request<AIStatus>("/ai/status", { headers: aiAction }),
+  script: (text: string) => request<{ text: string }>("/ai/script", { ...json("POST", { text, confirmed: true }), headers: aiAction }),
+  subtitles: (text: string, mode: SubtitleMode) => request<{ srt: string; cues: AICue[] }>("/ai/subtitles", {
+    ...json("POST", { text, mode, confirmed: true }), headers: aiAction,
+  }),
+};
+
 export type BackupSettings = { status: "ready" | "not_configured" | "error"; location: string; free_bytes: number | null; error?: string };
 export type BackupPreview = { location: string; free_bytes: number; total_bytes: number; revision: string;
   include_assets: boolean; files: { name: string; label: string; size: number }[] };
@@ -101,6 +113,7 @@ export const projects = {
   list: () => request<{ items: ProjectSummary[] }>("/projects"),
   create: (name: string) => request<Project>("/projects", json("POST", { name })),
   get: (id: string) => request<Project>(path(id)),
+  saveScriptPlan: (id: string, text: string) => request<{ text: string }>(`${path(id)}/script-plan`, json("PUT", { text })),
   import: (id: string, file: string) => request<{ asset: Asset }>(`${path(id)}/media`, json("POST", { path: file })),
   validate: (id: string, timeline: Timeline) => request<Timeline>(`${path(id)}/timeline/validate`, json("POST", timeline)),
   save: (id: string, timeline: Timeline) => request<Project>(`${path(id)}/timeline`, json("PUT", timeline)),

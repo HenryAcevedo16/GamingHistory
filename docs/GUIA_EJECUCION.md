@@ -14,6 +14,7 @@ Repo: https://github.com/HenryAcevedo16/GamingHistory  (local: E:\GamingHistory)
 | 7 Editor visual | Hecha y verificada (Edge headless) |
 | 8 Respaldo local | Hecha y verificada |
 | 8 Google Drive | Pospuesta |
+| 9 Asistente de texto | Verificado con Claude Code y SDK en Windows |
 
 ## 1. Preparar (una sola vez)
 ```powershell
@@ -62,6 +63,65 @@ Revisa `$Repo` y `$VectCut` al inicio de `iniciar-studio.ps1`. Doble clic en `in
 
 ## 6. Apagar
 `detener-studio.bat` (cierra 8011, 3000 y 9000) o el bloque del paso 2.
+
+## 7. Asistente de texto (Claude Code)
+
+En **cada PC** (trabajo y casa), instala o actualiza Claude Code y, con el mismo
+usuario de Windows que abre Studio, ejecuta:
+
+```powershell
+claude --version
+claude auth login
+claude auth status
+.\backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+```
+
+Studio requiere una CLI instalada con `--restricted` y soporte de mensajes
+`client_composed` (mínimo de protocolo 2.1.248; verificada con **2.1.319**). Si
+Extensiones indica que esa CLI no admite el aislamiento, actualízala. Se comprobó
+`claude-agent-sdk` 0.2.188 en el entorno real de Python 3.14.3. No configures
+`ANTHROPIC_API_KEY` para Studio: usa la sesión `claude.ai` de Claude Code, no el
+binario incluido por el SDK. No hay proceso extra que iniciar ni cambios en
+`iniciar-studio.ps1`. Para configurar el backend, usa `GHS_AI_TIMEOUT_SECONDS`
+(60 por defecto; máximo 300) y, opcionalmente, `GHS_AI_MODEL` (p. ej. `sonnet`).
+
+- En **Extensiones**, pulsa **Verificar conexión con Claude**. Este botón envía
+  un mensaje de prueba fijo (sin datos de proyecto) y exige una respuesta real.
+- En un proyecto, pega un texto de guion o un SRT válido de hasta 12.000
+  caracteres. Corregir conserva los tiempos; generar también requiere texto
+  ya temporizado en SRT y permite subdividir sus intervalos. No hay
+  transcripción de audio. La aplicación rechaza una salida SRT inválida,
+  solapada o con tiempos fuera de los permitidos.
+- Tras revisar, guarda el plan textual en el proyecto (no cambia cortes) o
+  añade los subtítulos como pista nueva. Para persistir la pista, pulsa
+  **Guardar timeline**. También puedes descartar la propuesta.
+
+Studio y los proyectos siguen en la PC, pero **la inferencia no es offline**:
+Claude Code contacta a Anthropic cuando pulsas un botón de envío. No pegues
+rutas, tokens ni contenido de `.env`. Studio no lee archivos para preparar el
+mensaje y bloquea patrones sensibles comunes, pero no puede reconocer
+credenciales arbitrarias pegadas como texto. Se desactivan herramientas,
+MCP, habilidades, hooks y persistencia de sesión; el diagnóstico no sustituye
+un aislamiento del sistema operativo frente a una CLI o políticas del equipo
+no confiables. La auditoría SQLite solo guarda acción, estado y código de error.
+
+Desde la raíz, ejecuta el diagnóstico real sin levantar servidores:
+
+```powershell
+.\backend\.venv\Scripts\python.exe scripts\verify_phase9.py
+.\backend\.venv\Scripts\python.exe scripts\verify_phase9.py --suggestions
+```
+
+`--suggestions` también envía un guion y un SRT sintéticos. Usa una base SQLite
+en memoria, sin tocar la base habitual. Ante un fallo devuelve **No verificado**
+y un código de salida distinto de cero.
+
+Referencias oficiales: [opciones de Python](https://code.claude.com/docs/en/agent-sdk/python#claudeagentoptions),
+[configuración que no controla el SDK](https://code.claude.com/docs/en/agent-sdk/claude-code-features#what-settingsources-does-not-control)
+y [autenticación del quickstart](https://code.claude.com/docs/en/agent-sdk/quickstart#setup).
+El quickstart documenta API keys para integraciones y restringe ofrecer la
+sesión o las cuotas de `claude.ai` en productos de terceros. Este flujo es
+exclusivamente personal y local, no para distribución o servicio compartido.
 
 ## Si algo falla
 - Botón deshabilitado: abrir el detalle del plugin; indica el motivo.

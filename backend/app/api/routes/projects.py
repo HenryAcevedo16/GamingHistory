@@ -91,6 +91,21 @@ def replace_project(
     return repository.save(project)
 
 
+class ScriptPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=60000)
+
+
+@router.put("/{project_id}/script-plan", response_model=ScriptPlanRequest)
+def save_script_plan(project_id: str, payload: ScriptPlanRequest,
+                     repository: ProjectRepository = Depends(_repository)) -> ScriptPlanRequest:
+    project = repository.get(project_id)
+    project.metadata["script_plan"] = payload.text
+    repository.save(project)
+    return payload
+
+
 @router.get("/{project_id}/timeline", response_model=TimelinePayload)
 def get_timeline(
     project_id: str,
