@@ -398,15 +398,16 @@ las fases anteriores.
 ## Fase 3 — Integración FFmpeg verificada (2026-11-23)
 
 - **Estado:** completada
-- **Commit de cierre:** commit de esta fase con mensaje `fase 3: adaptador ffmpeg` (hash en `git log`)
+- **Commit de cierre:** `2e6e3e2` (`fase 3: adaptador ffmpeg`)
 - **Implementado:**
   - `backend/app/core/exec.py`: `run_command()` pasa `env=minimal_env()` al subproceso; los
     binarios ya no heredan credenciales del backend. Prueba `tests/test_exec.py` demuestra
     que una variable sensible no llega al hijo (`cmd.exe` responde `absent`).
   - `backend/app/editing/adapter.py`: `execute_operation()` ya no acepta `connected` del
     llamador; consulta el estado persistido (`PluginState.enabled` y `.connected`) y lanza
-    `PLUGIN_NOT_CONNECTED` si falta o está deshabilitado. Pruebas actualizadas y nueva prueba
-    de plugin deshabilitado.
+    `PLUGIN_NOT_CONNECTED` si la fila no existe o está deshabilitada. Se prueba contra
+    `PluginState` real en base temporal (desconectado, deshabilitado y sin fila) y se verifica
+    que pasar `connected=` lanza `TypeError`.
   - `backend/app/editing/adapters/ffmpeg.py`: `FFmpegAdapter` registrado con
     `@register_adapter("ffmpeg")`; `adapters/__init__.py` lo autodescubre y `main.py` lo
     importa en el arranque, sin que el núcleo lo conozca. Solo ejecuta `ffmpeg`/`ffprobe`
@@ -436,9 +437,16 @@ las fases anteriores.
     efectivas y verificadas. Frontend: panel de Extensiones muestra "declaradas vs.
     verificadas" con los datos reales; el panel del router ya no anuncia "Fase 3".
   - Pruebas nuevas: contrato real de FFmpeg (se omite con motivo si falta el binario),
-    conversión Unified → FFmpeg, rechazo de rutas, persistencia de jobs y las dos deudas.
+    conversión Unified → FFmpeg, rechazo de rutas, persistencia de jobs, saneado del entorno
+    del subproceso y gate de conexión contra `PluginState` persistido.
 - **Probado realmente (comando → resultado):**
-  - `python -m pytest` → **41 passed**.
+  - `python -m pytest` → **44 passed**.
+  - `python -m pytest tests/test_exec.py tests/test_adapter_contract.py -o addopts="" -v` →
+    14 passed. Con `GHS_TEST_SECRET` definida en el padre, `run_command("cmd.exe", ...)`
+    devuelve `child_stdout=absent` (`parent_value=must-not-reach-child`).
+  - Gate de conexión: 5 pruebas verdes (`desconectado`, `desconectado persistido`,
+    `deshabilitado persistido`, `sin fila`, `connected=` rechazado con `TypeError`); en todas
+    `adapter.calls == []` y no se consultan capacidades.
   - `python -m compileall -q app` → exit 0.
   - `npm run lint` → sin errores ni warnings.
   - `npm run build` → compilado; rutas `/`, `/_not-found` y `/extensions` generadas.
