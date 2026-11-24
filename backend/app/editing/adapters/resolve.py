@@ -13,6 +13,7 @@ mapping and reports every element it cannot express instead of dropping it.
 from __future__ import annotations
 
 import os
+import re
 from math import isfinite
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,18 @@ _IMPLEMENTED = {
 
 _MEDIA_TYPES = {"video": 1, "audio": 2}
 _CAPABILITY_IDS = {"project.inspect", "project.create", "media.import", "timeline.create", "track.add", "clip.add", "render", "job.status"}
+_VERSION = re.compile(r"(\d{1,4})\.(\d{1,4})(?:\.\d{1,8}){0,3}", re.ASCII)
+_FREE_UNAVAILABLE = "Puente interno no disponible en Resolve Free 21.1 o posterior: requiere Studio."
+
+
+def _version_pair(version: Any) -> tuple[int, int] | None:
+    match = _VERSION.fullmatch(version) if isinstance(version, str) else None
+    return (int(match[1]), int(match[2])) if match else None
+
+
+def _blocked_edition(edition: Any, version: Any) -> bool:
+    pair = _version_pair(version)
+    return edition == "free" and pair is not None and pair >= (21, 1)
 
 
 def _norm(path: str) -> str:
@@ -95,6 +108,25 @@ class ResolveConverter(TimelineConverter):
 
     target = "resolve"
 
+    @staticmethod
+    def clip_placement(track: dict[str, Any], clip: dict[str, Any], *, source_fps: float,
+                       timeline_start: int) -> dict[str, Any]:
+        """Translate a planned clip to a Resolve source range and destination track."""
+        if not isfinite(source_fps) or source_fps <= 0 or "record_offset_frames" not in clip:
+            raise InvalidOperation("Se necesitan los FPS del medio y de la timeline.")
+        start = round(clip["source_in_seconds"] * source_fps)
+        end = round((clip["source_in_seconds"] + clip["duration_seconds"]) * source_fps)
+        if end <= start:
+            raise InvalidOperation("El recorte no abarca un fotograma completo.")
+        return {
+            "start_frame": start,
+            # AppendToTimeline in Resolve 21.0.4.5 uses an exclusive endFrame.
+            "end_frame": end,
+            "record_frame": timeline_start + clip["record_offset_frames"],
+            "track_index": track["index"],
+            "media_type": track["kind"],
+        }
+
     def convert(self, project: Project) -> ConversionResult:
         unsupported: list[UnsupportedElement] = []
         warnings: list[str] = []
@@ -125,6 +157,7 @@ class ResolveConverter(TimelineConverter):
 
         asset_ids = {asset["id"] for asset in assets}
         tracks: list[dict[str, Any]] = []
+        track_counts = {"video": 0, "audio": 0}
         for track_index, track in enumerate(project.tracks):
             if isinstance(track, SubtitleTrack):
                 if track.cues:
@@ -146,6 +179,7 @@ class ResolveConverter(TimelineConverter):
                 kind = "audio"
             else:  # pragma: no cover - the discriminated union has three members
                 continue
+            track_counts[kind] += 1
             for clip in items:
                 if clip.asset_id not in asset_ids:
                     unsupported.append(UnsupportedElement(
@@ -185,7 +219,7 @@ class ResolveConverter(TimelineConverter):
                             )
                         )
                 clips.append(entry)
-            tracks.append({"id": track.id, "name": track.name, "kind": kind, "enabled": track.enabled,
+            tracks.append({"id": track.id, "name": track.name, "kind": kind, "index": track_counts[kind], "enabled": track.enabled,
                            "locked": track.locked, "clips": clips})
 
         for index, transition in enumerate(project.transitions):
@@ -247,21 +281,27 @@ class ResolveAdapter(EditorAdapter):
     def get_capabilities(self) -> AdapterCapabilities:
         config = self._state_config()
         notes = [
-            "DaVinci Resolve vía puente in-app autenticado (HMAC-SHA256, loopback).",
+            "Conexión por puente interno autenticado, ejecutado dentro de DaVinci Resolve.",
+            "Integración frágil: una actualización de Resolve puede deshabilitar el puente interno. "
+            "Resolve Free 21.1 o posterior no es compatible.",
         ]
         edition = config.get("resolve_edition")
-        if edition:
+        if edition in ("free", "studio"):
             notes.append(
                 "Edición detectada: "
                 + ("Studio" if edition == "studio" else "Free")
                 + "."
             )
-        if config.get("resolve_version"):
-            notes.append(f"Versión: {config['resolve_version']}.")
+        version = config.get("resolve_version")
+        if _version_pair(version) is not None:
+            notes.append(f"Versión: {version}.")
+        blocked = _blocked_edition(edition, version)
+        if blocked:
+            notes.append(_FREE_UNAVAILABLE)
         return AdapterCapabilities(
-            operations=set(_IMPLEMENTED),
-            capability_ids=_CAPABILITY_IDS,
-            verified=bool(config.get("resolve_verified", False)),
+            operations=_IMPLEMENTED if not blocked else {EditorOperation.HEALTH_CHECK, EditorOperation.GET_CAPABILITIES},
+            capability_ids=_CAPABILITY_IDS if not blocked else set(),
+            verified=not blocked and bool(config.get("resolve_verified", False)),
             notes=notes,
         )
 
@@ -269,15 +309,14 @@ class ResolveAdapter(EditorAdapter):
 
     def health_check(self) -> bool:
         try:
-            health = self.bridge.health()
+            health = self._health()
         except (ResolveBridgeUnavailable, ResolveBridgeCallError) as exc:
             self.last_health_error = exc.message
             return False
         self.last_health_error = None
-        self._remember_health(health)
-        if health.get("connected") is True and health.get("current_project"):
+        if health.get("current_project"):
             self._mark_verified(["project.inspect"])
-        return health.get("connected") is True
+        return True
 
     # -- media -------------------------------------------------------------
 
@@ -322,6 +361,7 @@ class ResolveAdapter(EditorAdapter):
     def create_project(self, name: str, **options: Any) -> dict[str, Any]:
         if options or not isinstance(name, str) or not name.strip():
             raise InvalidOperation("Indica un nombre de proyecto sin opciones adicionales.")
+        self._health()
         project = self.bridge.call("project_manager", "CreateProject", name.strip())
         handle = _handle_of(project)
         if handle is None or self.bridge.call(handle, "GetName") != name.strip():
@@ -334,6 +374,7 @@ class ResolveAdapter(EditorAdapter):
             raise InvalidOperation("La timeline necesita un nombre.")
         if options or not project_id.startswith("h:"):
             raise InvalidOperation("Indica el identificador del proyecto de Resolve, sin opciones adicionales.")
+        self._health()
         pool = _handle_of(self.bridge.call(project_id, "GetMediaPool"))
         if pool is None:
             raise InvalidOperation("Resolve no devolvió el Media Pool del proyecto.")
@@ -355,6 +396,7 @@ class ResolveAdapter(EditorAdapter):
         if track_type not in {"video", "audio", "subtitle"}:
             raise InvalidOperation(f"Tipo de pista no soportado: '{track_type}'.")
         target = self._timeline_target(timeline_id)
+        self._health()
         added = self.bridge.call(target, "AddTrack", track_type)
         if added is not True:
             raise InvalidOperation("Resolve no añadió la pista (AddTrack no devolvió True).")
@@ -362,7 +404,8 @@ class ResolveAdapter(EditorAdapter):
         return {"timeline": timeline_id, "track_type": track_type, "added": True}
 
     def add_clip(self, timeline_id: str, clip: dict[str, Any]) -> dict[str, Any]:
-        item = self._media_item(clip)
+        health = self._health()
+        item = self._media_item(clip, health)
         info: dict[str, Any] = {"mediaPoolItem": item}
         for key, target_key in (("start_frame", "startFrame"), ("end_frame", "endFrame"), ("record_frame", "recordFrame")):
             value = clip.get(key)
@@ -370,6 +413,8 @@ class ResolveAdapter(EditorAdapter):
                 if type(value) is not int or value < 0:
                     raise InvalidOperation(f"'{key}' debe ser un entero no negativo.")
                 info[target_key] = value
+        if "endFrame" in info and info["endFrame"] <= info.get("startFrame", 0):
+            raise InvalidOperation("'end_frame' es exclusivo y debe ser mayor que 'start_frame'.")
         if clip.get("track_index") is not None:
             index = clip["track_index"]
             if type(index) is not int or index < 1:
@@ -417,6 +462,7 @@ class ResolveAdapter(EditorAdapter):
     def get_job_status(self, job_id: str) -> dict[str, Any]:
         if not isinstance(job_id, str) or not job_id:
             raise InvalidOperation("Se necesita un id de trabajo de render.")
+        self._health()
         status = self.bridge.call("project", "GetRenderJobStatus", job_id)
         if not isinstance(status, dict) or not status.get("JobStatus"):
             raise InvalidOperation("Resolve no devolvió el estado del trabajo de render.")
@@ -488,8 +534,12 @@ class ResolveAdapter(EditorAdapter):
         except (ResolveBridgeUnavailable, ResolveBridgeCallError) as exc:
             raise ResolveBridgeUnavailable(exc.message, details=exc.details) from exc
         self._remember_health(health)
+        if _blocked_edition(health.get("edition"), health.get("version")):
+            raise ResolveBridgeUnavailable(_FREE_UNAVAILABLE)
         if health.get("connected") is not True:
             raise ResolveBridgeUnavailable("Resolve no confirmó una conexión activa.")
+        if health.get("edition") not in ("free", "studio") or _version_pair(health.get("version")) is None:
+            raise ResolveBridgeUnavailable("El puente no confirmó la edición y versión de Resolve.")
         return health
 
     def _timeline_target(self, timeline_id: str) -> str:
@@ -499,7 +549,7 @@ class ResolveAdapter(EditorAdapter):
             return "current_timeline"
         raise InvalidOperation("Indica un identificador de timeline de Resolve o 'current'.")
 
-    def _media_item(self, clip: dict[str, Any]) -> dict[str, str]:
+    def _media_item(self, clip: dict[str, Any], health: dict[str, Any]) -> dict[str, str]:
         explicit = _handle_arg(clip.get("media_handle"))
         if explicit is not None:
             return explicit
@@ -508,7 +558,7 @@ class ResolveAdapter(EditorAdapter):
             raise InvalidOperation(
                 "El clip necesita 'media_handle' o 'path' para localizar el medio en Resolve."
             )
-        media_roots = _real_roots((self._health().get("policy") or {}).get("media_roots"))
+        media_roots = _real_roots((health.get("policy") or {}).get("media_roots"))
         if not media_roots:
             raise InvalidOperation("El puente no publicó rutas de medios autorizadas.")
         path = self._validated_path(path_value, media_roots, "medio", must_exist=True)
@@ -577,14 +627,16 @@ class ResolveAdapter(EditorAdapter):
                 if state is None:
                     return
                 config = dict(state.config)
-                for key, source in (
-                    ("resolve_edition", "edition"),
-                    ("resolve_version", "version"),
-                    ("resolve_product", "product"),
-                ):
-                    value = health.get(source)
-                    if isinstance(value, str) and value:
-                        config[key] = value
+                edition, version = health.get("edition"), health.get("version")
+                if edition in ("free", "studio") and _version_pair(version) is not None:
+                    if (config.get("resolve_edition"), config.get("resolve_version")) != (edition, version):
+                        config.pop("verified_capabilities", None)
+                        config.pop("resolve_verified", None)
+                    config.update(resolve_edition=edition, resolve_version=version)
+                    if _blocked_edition(edition, version):
+                        state.connected = False
+                        state.connected_at = None
+                config.pop("resolve_product", None)
                 state.config = config
                 session.add(state)
                 session.commit()

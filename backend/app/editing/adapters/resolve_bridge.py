@@ -177,7 +177,7 @@ class ResolveBridgeClient:
         if response.get("ok") is not True:
             error = response.get("error")
             code = error.get("code") if isinstance(error, dict) else None
-            if code not in ("capability_unavailable", "stale_handle", "unauthorized", "no_project", "resolve_raised"):
+            if code not in ("capability_unavailable", "stale_handle", "unauthorized", "no_project", "resolve_raised", "operation_not_allowed"):
                 code = "bridge_error"
             raise ResolveBridgeCallError(
                 code, "el puente rechazó la operación.",

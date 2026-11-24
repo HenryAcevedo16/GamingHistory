@@ -522,19 +522,32 @@ las fases anteriores.
   verificadas. «Edición profesional» exige conexión y evidencia de creación de timeline
   y colocación de clip. El conversor Unified → Resolve devuelve un plan e identifica
   elementos no exportables.
-- **Probado realmente:** `health` de Resolve Free 21.0.4.5 informó la superficie cerrada de
-  15 operaciones. La prueba de integración usó el Plugin Manager y el adaptador real:
-  creó `GHS Resolve 1d13c80753`, importó un clip DNxHR, creó la timeline, leyó el clip en
-  la segunda pista de vídeo, guardó el proyecto y verificó la elección del router.
-  Resolve reportó `Finalizado` al 100 %; `ffprobe` confirmó vídeo y `0.958333 s` en
-  `%USERPROFILE%\Movies\ghs-resolve-1d13c80753\result.mov`.
-- **Comprobaciones:** `python -m pytest` con `GHS_RESOLVE_LIVE=1` → **48 passed**;
+- **Probado realmente:** `health` → Free 21.0.4.5 y 15 operaciones; una operación no
+  registrada → `operation_not_allowed`. La lista de nombres está en
+  `E:\davinci-resolve-mcp\src\utils\resolve_bridge_ops.py:148–169`; el dispatcher solo
+  registra esa lista (213–215) y rechaza otros nombres (225–232). `call` admite métodos
+  públicos; las 15 operaciones son los nombres del protocolo, no los métodos de Resolve.
+  `health.policy` → medios bajo `C:\Users\emil-`; salidas bajo `C:\Users\emil-\Movies`.
+  El adaptador valida las rutas para sus métodos de importación y render vía `call`.
+- **Rango de colocación:** `ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=avg_frame_rate,nb_read_frames:format=duration -of default=nw=1 <archivo>`
+  → fuente: 48 fotogramas a 24 fps (`2.000000 s`); primer render: 23 fotogramas
+  (`0.958333 s`). El recorte previsto era de un segundo, pero `[0, 23)` excluía el
+  fotograma 23. Al usar `[0, 24)`, la prueba real volvió a guardar un proyecto y renderizó
+  24 fotogramas (`1.000000 s`) en `%USERPROFILE%\Movies\ghs-resolve-e6d146d3d8\result.mov`.
+- **Pistas y credencial:** la prueba convierte `V1, A1, V2` a índices independientes
+  por tipo. El clip en V2 sale con `trackIndex=2`; la lectura real de Resolve devuelve
+  V1=0 clips, V2=1 clip y `GetDuration=24`. La misma prueba comparó la credencial sin
+  imprimirla contra logs capturados, auditoría y payloads de API usados por la UI: ausente.
+- **Comprobaciones:** `python -m pytest -rP` con `GHS_RESOLVE_LIVE=1` → **52 passed**;
   `python -m compileall -q app`, `npm run lint`, `npm run build` y `npx tsc --noEmit` → OK.
 - **Cómo reproducir:** en Resolve, iniciar `Workspace → Scripts → resolve_bridge`. En
-  `backend`, ejecutar `$env:GHS_RESOLVE_LIVE='1'; python -m pytest tests/test_resolve_live.py -s`.
+  `backend`, ejecutar `$env:GHS_RESOLVE_LIVE='1'; python -m pytest tests/test_resolve_live.py -rP`.
   Requiere FFmpeg/ffprobe y crea un proyecto y archivos de prueba. Desde Extensiones,
   instalar confirmando permisos, conectar y ejecutar el diagnóstico.
-- **Limitaciones:** Studio se distingue por edición detectada, pero no se probó. El
+- **Limitaciones:** Extensiones muestra «Puente interno» y advierte que una actualización
+  puede deshabilitarlo. El adaptador declara no disponible Free 21.1+; se verificó esa
+  regla con pruebas unitarias de Free 21.1/22.0 y Studio 21.1, sin instalaciones reales
+  de esas versiones. Studio sigue necesitando un puente funcional. El
   conversor produce un plan; no hay aún un envío automático de la timeline unificada
   desde la UI. El render final se probó con MOV/DNxHR; el modo de previsualización usa
   el mismo mecanismo y no se verificó por separado. La inserción de subtítulos, efectos
