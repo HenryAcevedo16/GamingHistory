@@ -108,3 +108,4 @@ class PluginManifest(BaseModel):
     icon: str | None = None
     accent: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     diagnostics: list[DiagnosticCheck] = Field(default_factory=list)
+    require_adapter_health: bool = False

@@ -129,7 +129,9 @@ class PluginManager:
             connected_at=state.connected_at,
             last_error=state.last_error,
             last_diagnosis=diagnosis,
-            checks_total=len(manifest.diagnostics) + (manifest.connection_type == "local-bridge"),
+            checks_total=len(manifest.diagnostics) + (
+                manifest.require_adapter_health or manifest.connection_type == "local-bridge"
+            ),
             requirements=manifest.requirements,
             permissions=manifest.permissions,
             tools=manifest.tools,
@@ -193,13 +195,13 @@ class PluginManager:
             manifest.diagnostics,
             default_timeout=settings.command_timeout_seconds,
         )
-        if runtime and manifest.connection_type == "local-bridge":
+        if manifest.require_adapter_health or (runtime and manifest.connection_type == "local-bridge"):
             result = self._adapter_health(manifest.id) if default_registry.has(manifest.id) else {
-                "status": "fail", "evidence": "No hay adaptador registrado para el puente.",
+                "status": "fail", "evidence": "No hay un adaptador registrado para verificar el canal.",
             }
             passed = result["status"] == "pass"
             report.checks.append(CheckResult(
-                id="adapter-health", label="Puente activo", kind="adapter",
+                id="adapter-health", label="Canal del adaptador activo", kind="adapter",
                 status="pass" if passed else "fail", evidence=result["evidence"],
             ))
             report.summary["passed" if passed else "failed"] += 1

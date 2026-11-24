@@ -1,7 +1,7 @@
 # PROGRESS — Gaming History Studio
 
 Bitácora operativa del repositorio. Describe lo que existe y lo que se verificó,
-no lo que se planea. Última actualización: **2026-11-23** (Fase 5 verificada en Resolve Free).
+no lo que se planea. Última actualización: **2026-11-23** (Fase 4 verificada en disco y en CapCut).
 
 ## 1. Estado actual
 
@@ -10,7 +10,7 @@ no lo que se planea. Última actualización: **2026-11-23** (Fase 5 verificada e
 | 1 | Monorepo, Plugin Manager, manifiestos, base de datos y pantalla Extensiones con datos reales | **Completada y verificada** |
 | 2 | Interfaz `EditorAdapter`, timeline unificado y `EditingRouter` | **Completada y verificada** |
 | 3 | Integración FFmpeg completa y verificada con una operación real | **Completada y verificada** |
-| 4 | Integración VectCutAPI/CapCut verificada | Pendiente (sin código) |
+| 4 | Integración VectCutAPI/CapCut verificada | **Completada y verificada** (disco y confirmación visual en CapCut) |
 | 5 | Integración DaVinci Resolve verificada | **Completada y verificada** (Free 21.0.4.5, puente in-app) |
 | 6 | Integración Descript opcional | Pendiente (sin código) |
 | 7 | Editor visual integrado con la timeline | Pendiente (sin código) |
@@ -30,7 +30,7 @@ Notas de alcance:
   Extensiones`); la Fase 2, como `49243a7` (`Fase 2: adaptadores, timeline y enrutador`). La
   Fase 3 se cierra con el commit de este cierre.
 - La Fase 5 usa el puente local iniciado dentro de DaVinci Resolve. El scripting externo
-  nativo sigue sin estar disponible en la edición Free probada. La Fase 4 sigue pendiente.
+   nativo sigue sin estar disponible en la edición Free probada.
 
 ## 2. Cómo ejecutar (Windows / PowerShell)
 
@@ -590,4 +590,75 @@ las fases anteriores.
     hay Studio con scripting externo en Local/Network. En Free 21.0.4 no hay acceso externo;
     la API cubre un superconjunto común, pero el permiso y varias funciones son de Studio.
   - Conclusión: no hay canal externo vivo; no se creó adaptador ni se simuló ninguna
-    operación.
+   operación.
+
+## Fase 4 — VectCutAPI/CapCut (2026-11-23, hora local)
+
+- **Estado:** completada; generación, lectura del artefacto real y revisión visual en CapCut verificadas.
+- **Commit de cierre:** `fase 4: adaptador vectcutapi capcut` (el commit que incluye esta entrada).
+- **Implementado:**
+  - `editing/adapters/vectcut.py`: adaptador autodescubierto, conversor Unified → CapCut,
+    validación de rutas, HTTP con timeout y auditoría, comprobación del contenido en disco
+    y persistencia de capacidades tras la comprobación. Acepta MP4, MP3 básico y subtítulos
+    SRT generados desde la timeline. Los elementos no traducidos se devuelven en `unsupported`.
+  - `POST/GET /api/projects/{id}/drafts` para generar y consultar resultados. La copia a CapCut
+    requiere `POST /api/projects/{id}/drafts/{draft_id}/deploy` con `{"confirm_copy":true}`.
+    Usa la carpeta local corroborada por `root_meta_info.json` o `CAPCUT_DRAFTS_DIR` confirmada
+    en Global Settings. No sobrescribe borradores ni modifica el catálogo de CapCut.
+  - El manifiesto exige una comprobación HTTP real del adaptador. Extensiones usa su panel
+    existente para mostrar declaradas vs. verificadas y las notas de borrador sin render y
+    fragilidad del formato. «Borrador editable» solo selecciona CapCut conectado con las
+    capacidades verificadas requeridas; la API permite la primera operación de comprobación.
+- **Probado realmente (comando → resultado):**
+  - `git -C E:\VectCutAPI rev-parse HEAD` → `5ae379b241d3d0a0f703e3095f3f0f96bd263ee4`.
+    [`README.md` del upstream, líneas 16–24 y 47–60](https://github.com/sun-guannan/VectCutAPI/blob/5ae379b241d3d0a0f703e3095f3f0f96bd263ee4/README.md#L16-L60)
+    distingue borradores locales de vista previa/render en nube; `MCP_Documentation_English.md:15–29` y
+    `rest_client_test.http:14–33` describen el flujo de crear, insertar y guardar. Se usó HTTP
+    directo con el contrato de `capcut_server.py`, no el proceso MCP ni servicios web.
+  - `GET /` en `127.0.0.1:9000` → 404 de Werkzeug (no es un endpoint de salud).
+    `POST /create_draft` con `{"width":320,"height":240}` → éxito,
+    `dfd_cat_1795483657_59a0a447`. `POST /save_draft` con ese ID, `auto_deploy=false` y
+    `auto_reload=false` → `E:\VectCutAPI\dfd_cat_1795483657_59a0a447`; `draft_info.json` en disco.
+    `save_draft_impl.py:77–79` confirma el directorio por defecto y el override `draft_folder`.
+    En la integración, la salida va a un subdirectorio nuevo dentro del workspace.
+  - `ffmpeg -v error -n -f lavfi -i testsrc2=size=320x240:rate=24 -t 2 -c:v libx264 -pix_fmt yuv420p E:\GamingHistory\backend\data\workspace\phase4-diagnostic.mp4`
+    → MP4 H.264 de 2 s. Proyecto `e43dbd1f6445464a9898b8f826bca8bd`: `POST .../drafts`
+    con `{"width":320,"height":240}` → borrador `dfd_cat_1795484464_505eff12`, registrado
+    y devuelto también por `GET .../drafts`. La lectura independiente de `draft_info.json` en
+    `backend/data/workspace/vectcut-e93pnqv_/dfd_cat_1795484464_505eff12` confirmó el MP4 local,
+    clip `[0, 1] s` desde `0,25 s` de la fuente y subtítulo **GHS Phase 4 - CapCut** de `0,20` a
+    `0,85 s`. `draft_meta_info.json` contiene `cloud_draft_sync=false`.
+  - `POST /api/plugins/vectcut-capcut/connect` → conectado por `GET /get_font_types`; el router
+    devolvió `selected=null` antes de la prueba y `vectcut-capcut`, `executable=true` después.
+  - `POST /api/projects/e43dbd1f6445464a9898b8f826bca8bd/drafts/dfd_cat_1795484464_505eff12/deploy`
+    con `{"confirm_copy":true}` → copia autorizada y verificada en la carpeta local de CapCut.
+  - Revisión manual en CapCut → el usuario confirmó que el borrador se ve.
+  - En `backend/`: `$env:VECTCUT_ROOT='E:\VectCutAPI'; $env:GHS_VECTCUT_LIVE='1'; python -m pytest -o addopts= -q -rsP`
+    → **60 passed, 1 skipped** (Resolve real no activado); la prueba viva de VectCut verificó
+    vídeo, audio básico y subtítulo en disco. `python -m compileall -q app` → exit 0.
+  - En `frontend/`: `npm run lint`, `npx tsc --noEmit` y
+    `$env:NEXT_PUBLIC_API_URL='http://127.0.0.1:8012'; npm run build` → exit 0.
+    `GET http://127.0.0.1:3001/extensions` → 200; `GET http://127.0.0.1:8012/api/health`
+    con ese origen → 200, CORS correcto, 4 manifiestos y 0 errores.
+- **No probado / limitaciones:**
+  - Se confirmó la visualización; no se verificó por separado editar y volver a guardar el
+    subtítulo. El formato `capcut_legacy` es privado y el editor puede dejar de abrirlo después
+    de una actualización. No hay render final por VectCutAPI,
+    efectos, transiciones ni materiales Pro en este flujo.
+  - No se usan enlaces de vista previa, descarga remota ni subida. El cliente limita HTTP a
+    loopback sin proxy ni redirecciones, admite `VECTCUT_ENDPOINT` para otro puerto local y
+    comprueba la configuración del checkout confiable indicado por `VECTCUT_ROOT`.
+    No había `config.json` y el upstream observado declara `IS_UPLOAD_DRAFT=False`
+    en `settings/local.py:24–28`. El API no certifica la configuración de su proceso:
+    `VECTCUT_ROOT` debe corresponder al servicio arrancado, y los cambios de configuración
+    requieren reiniciarlo. El flujo local probado no utiliza la nube de CapCut Desktop.
+- **Notas de entorno y estado:**
+  - CapCut internacional gratuito instalado: `C:\Users\emil-\AppData\Local\CapCut\Apps\8.5.0.3590\CapCut.exe`
+    (`ProductVersion=8.5.0.800f1aa5`). `root_meta_info.json` confirma como `root_path`
+    `C:\Users\emil-\AppData\Local\CapCut\User Data\Projects\com.lveditor.draft`.
+  - VectCutAPI/FFmpeg conectados; VectCutAPI en `127.0.0.1:9000` vía `venv-capcut`, backend
+    Uvicorn en `127.0.0.1:8012` y frontend Next (`npm run start`) en `127.0.0.1:3001`.
+  - `backend/data/studio.db`: `draft_result`, capacidades en `plugin_state.config` y llamadas
+    HTTP auditadas en `audit_log`. El original permanece en el workspace; la copia autorizada
+    está en `C:\Users\emil-\AppData\Local\CapCut\User Data\Projects\com.lveditor.draft\dfd_cat_1795484464_505eff12`.
+- **Próximo paso:** repetir la prueba de apertura si se actualiza CapCut o VectCutAPI.

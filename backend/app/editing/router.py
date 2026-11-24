@@ -43,6 +43,7 @@ class IntentSpec:
     required_capabilities: tuple[str, ...]
     adapter_operation: EditorOperation
     require_verified: bool = False
+    exclusive: bool = False
 
 
 INTENT_SPECS: tuple[IntentSpec, ...] = (
@@ -57,10 +58,12 @@ INTENT_SPECS: tuple[IntentSpec, ...] = (
     IntentSpec(
         id="editable_draft",
         label="Borrador editable",
-        description="Genera un borrador para revisar en CapCut.",
+        description="Genera un borrador para revisar en CapCut; no renderiza vídeo.",
         preferred_plugin_id="vectcut-capcut",
-        required_capabilities=("draft.create", "track.add"),
-        adapter_operation=EditorOperation.CREATE_PROJECT,
+        required_capabilities=("draft.create", "draft.save", "clip.add", "subtitle.add"),
+        adapter_operation=EditorOperation.EXPORT_PROJECT,
+        require_verified=True,
+        exclusive=True,
     ),
     IntentSpec(
         id="professional_edit",
@@ -151,6 +154,7 @@ class EditingRouter:
                 cloud_authorized=cloud_authorized,
                 adapter_operation=spec.adapter_operation,
                 require_verified=spec.require_verified,
+                exclusive_plugin_id=spec.preferred_plugin_id if spec.exclusive else None,
             )
             candidates.append(candidate)
             if candidate.eligible:
@@ -254,6 +258,7 @@ class EditingRouter:
         cloud_authorized: bool,
         adapter_operation: EditorOperation,
         require_verified: bool,
+        exclusive_plugin_id: str | None,
     ) -> tuple[RouterCandidate, int]:
         installed = view.install_status in INSTALLED_STATUSES
         adapter_registered = self.adapters.has(view.id)
@@ -307,6 +312,8 @@ class EditingRouter:
             )
         if not view.connected:
             return candidate("Sin conexión verificada.", eligible=False), 0
+        if exclusive_plugin_id and view.id != exclusive_plugin_id:
+            return candidate("No es el editor de esta operación.", eligible=False), 0
         if view.connection_type in CLOUD_CONNECTION_TYPES and not cloud_authorized:
             return (
                 candidate(
@@ -355,6 +362,7 @@ class EditingRouter:
         reasons: list[str] = []
         if candidate.plugin_id == preferred:
             reasons.append("es el editor por defecto para esta operación")
-        reasons.append("está conectado y declara las capacidades necesarias")
+        reasons.append("está conectado y verificó las capacidades necesarias" if spec.require_verified
+                       else "está conectado y declara las capacidades necesarias")
         reasons.append(f"coste '{candidate.pricing}'")
         return "; ".join(reasons) + "."

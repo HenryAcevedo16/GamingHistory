@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session
 
 from app.core.db import get_session
+from app.editing.adapter import EditorOperation, execute_operation
+from app.editing.converters import UnsupportedElement
+from app.editing.drafts import DraftResult, list_drafts
 from app.editing.persistence import ProjectRepository
+from app.editing.registry import default_registry
 from app.editing.timeline import Project, TimelinePayload
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -101,3 +106,43 @@ def replace_timeline(
 ) -> Project:
     project = repository.get(project_id)
     return repository.save(project.with_timeline(payload))
+
+
+class DraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    width: int = Field(default=1920, strict=True, ge=16, le=7680)
+    height: int = Field(default=1080, strict=True, ge=16, le=7680)
+
+
+class DraftExport(BaseModel):
+    draft: DraftResult
+    exported: list[str]
+    unsupported: list[UnsupportedElement]
+
+
+class DraftDeployRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm_copy: Literal[True]
+
+
+def _export_draft(project_id: str, target: str, **options: object):
+    return execute_operation(default_registry.create("vectcut-capcut"), EditorOperation.EXPORT_PROJECT,
+                             {"timeline_id": project_id, "target": target, **options})
+
+
+@router.post("/{project_id}/drafts", response_model=DraftExport, status_code=201)
+def generate_capcut_draft(project_id: str, payload: DraftRequest) -> DraftExport:
+    return _export_draft(project_id, "capcut", **payload.model_dump())
+
+
+@router.get("/{project_id}/drafts", response_model=list[DraftResult])
+def project_drafts(project_id: str, session: Session = Depends(get_session)) -> list[DraftResult]:
+    ProjectRepository(session).get_record(project_id)
+    return list_drafts(session, project_id)
+
+
+@router.post("/{project_id}/drafts/{draft_id}/deploy", status_code=201)
+def deploy_capcut_draft(project_id: str, draft_id: str, payload: DraftDeployRequest) -> dict[str, str]:
+    return _export_draft(project_id, "capcut-desktop", draft_id=draft_id)
