@@ -169,6 +169,7 @@ export const CHECK_META: Record<
 
 export const CONNECTION_LABEL: Record<string, string> = {
   "local-binary": "Binario local",
+  "local-bridge": "Puente local",
   "mcp-stdio": "MCP stdio",
   "mcp-http": "MCP HTTP",
   "cloud-api": "API en la nube",

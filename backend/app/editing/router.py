@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from app.core.errors import InvalidOperation
 from app.editing.adapter import EditorOperation
+from app.editing.capabilities import capabilities_for_operations
 from app.editing.registry import AdapterRegistry, default_registry
 from app.editing.schemas import (
     RouterCandidate,
@@ -41,6 +42,7 @@ class IntentSpec:
     preferred_plugin_id: str
     required_capabilities: tuple[str, ...]
     adapter_operation: EditorOperation
+    require_verified: bool = False
 
 
 INTENT_SPECS: tuple[IntentSpec, ...] = (
@@ -67,6 +69,7 @@ INTENT_SPECS: tuple[IntentSpec, ...] = (
         preferred_plugin_id="davinci-resolve",
         required_capabilities=("timeline.create", "clip.add"),
         adapter_operation=EditorOperation.CREATE_TIMELINE,
+        require_verified=True,
     ),
     IntentSpec(
         id="transcript_edit",
@@ -112,6 +115,8 @@ class EditingRouter:
             )
 
         required = tuple(required_capabilities or spec.required_capabilities)
+        if spec.require_verified:
+            required = tuple(dict.fromkeys((*spec.required_capabilities, *required)))
         preferred = preferred_plugin_id or spec.preferred_plugin_id
         capability_source = (
             "adapter"
@@ -145,6 +150,7 @@ class EditingRouter:
                 manual_plugin_id=manual_plugin_id,
                 cloud_authorized=cloud_authorized,
                 adapter_operation=spec.adapter_operation,
+                require_verified=spec.require_verified,
             )
             candidates.append(candidate)
             if candidate.eligible:
@@ -247,6 +253,7 @@ class EditingRouter:
         manual_plugin_id: str | None,
         cloud_authorized: bool,
         adapter_operation: EditorOperation,
+        require_verified: bool,
     ) -> tuple[RouterCandidate, int]:
         installed = view.install_status in INSTALLED_STATUSES
         adapter_registered = self.adapters.has(view.id)
@@ -256,20 +263,20 @@ class EditingRouter:
             if capability.status != "unsupported"
         }
         if adapter_registered:
-            operations = (
-                self.adapters.create(view.id).get_capabilities().operations
+            adapter_caps = (
+                self.adapters.create(view.id).get_capabilities()
                 if view.enabled and view.connected
-                else set()
+                else None
             )
-            operation_capabilities = {
-                EditorOperation.IMPORT_MEDIA: {"media.inspect"},
-                EditorOperation.CREATE_TIMELINE: {"media.cut", "media.concat"},
-                EditorOperation.RENDER_FINAL: {"render.final", "audio.mix"},
-                EditorOperation.RENDER_PREVIEW: {"render.final"},
-            }
-            available_capabilities = set().union(
-                *(operation_capabilities.get(item, set()) for item in operations)
-            )
+            if adapter_caps is None:
+                available_capabilities = set()
+            elif adapter_caps.capability_ids is not None:
+                available_capabilities = adapter_caps.capability_ids
+            else:
+                available_capabilities = capabilities_for_operations(adapter_caps.operations)
+        if require_verified:
+            verified = set(view.verified_capabilities) if adapter_registered else set()
+            available_capabilities = available_capabilities & verified
         missing = [capability for capability in required if capability not in available_capabilities]
 
         def candidate(reason: str, *, eligible: bool) -> RouterCandidate:
@@ -311,7 +318,8 @@ class EditingRouter:
         if missing:
             return (
                 candidate(
-                    "No declara las capacidades requeridas: " + ", ".join(missing) + ".",
+                    ("Faltan capacidades verificadas por el adaptador: " if require_verified else
+                     "No declara las capacidades requeridas: ") + ", ".join(missing) + ".",
                     eligible=False,
                 ),
                 0,

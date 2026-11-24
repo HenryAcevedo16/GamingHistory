@@ -123,7 +123,14 @@ def test_connected_plugin_can_win_for_its_intent() -> None:
             capabilities=("timeline.create", "clip.add"),
         )
     ]
-    decision = EditingRouter(views).decide("professional_edit")
+    registry = AdapterRegistry()
+    registry.register("davinci-resolve", lambda plugin_id: DummyAdapter(
+        plugin_id, {EditorOperation.CREATE_TIMELINE, EditorOperation.ADD_CLIP}
+    ))
+    router = EditingRouter(views, adapters=registry)
+    assert router.decide("professional_edit").selected is None
+    views[0].verified_capabilities = ["timeline.create", "clip.add"]
+    decision = router.decide("professional_edit")
 
     assert decision.selected is not None
     assert decision.selected.plugin_id == "davinci-resolve"
@@ -162,17 +169,17 @@ def test_manual_selection_overrides_default_preference() -> None:
     views = [
         make_view("ffmpeg", capabilities=("media.cut", "media.concat")),
         make_view(
-            "davinci-resolve",
-            capabilities=("timeline.create", "clip.add", "media.cut", "media.concat"),
+            "other-editor",
+            capabilities=("media.cut", "media.concat"),
         ),
     ]
 
     decision = EditingRouter(views).decide(
-        "auto_assembly", manual_plugin_id="davinci-resolve"
+        "auto_assembly", manual_plugin_id="other-editor"
     )
 
     assert decision.selected is not None
-    assert decision.selected.plugin_id == "davinci-resolve"
+    assert decision.selected.plugin_id == "other-editor"
     ffmpeg = next(
         candidate for candidate in decision.candidates if candidate.plugin_id == "ffmpeg"
     )

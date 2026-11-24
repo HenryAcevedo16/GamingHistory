@@ -50,6 +50,7 @@ class PluginView(BaseModel):
     capabilities: list[PluginCapability] = Field(default_factory=list)
     declared_capabilities: list[PluginCapability] = Field(default_factory=list)
     verified_capabilities: list[str] = Field(default_factory=list)
+    adapter_notes: list[str] = Field(default_factory=list)
     known_costs: KnownCosts
     diagnostics: list[DiagnosticCheck] = Field(default_factory=list)
 

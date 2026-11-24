@@ -84,6 +84,7 @@ export interface PluginView {
   capabilities: PluginCapability[];
   declared_capabilities: PluginCapability[];
   verified_capabilities: string[];
+  adapter_notes?: string[];
   known_costs: KnownCosts;
   diagnostics: DiagnosticCheck[];
 }

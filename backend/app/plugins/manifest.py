@@ -11,7 +11,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ConnectionType = Literal["local-binary", "mcp-stdio", "mcp-http", "cloud-api"]
+ConnectionType = Literal[
+    "local-binary", "local-bridge", "mcp-stdio", "mcp-http", "cloud-api"
+]
 InstallStatus = Literal["not_installed", "installed", "connected", "disabled", "error"]
 RiskLevel = Literal["low", "medium", "high"]
 CheckKind = Literal["binary", "file", "env", "tcp", "http", "command"]

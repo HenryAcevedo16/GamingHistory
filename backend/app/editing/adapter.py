@@ -68,6 +68,7 @@ class AdapterCapabilities(BaseModel):
 
     operations: set[EditorOperation] = Field(default_factory=set)
     verified: bool = False
+    capability_ids: set[str] | None = None
     notes: list[str] = Field(default_factory=list)
 
 

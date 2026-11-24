@@ -6,19 +6,21 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from app.core.config import settings
-from app.editing.adapter import EditorOperation
-from app.editing.registry import default_registry
 from app.core.errors import (
+    CapabilityNotAvailable,
     DependencyUnavailable,
     PermissionsNotAcknowledged,
     PluginDisabled,
     PluginNotFound,
     PluginNotInstalled,
 )
+from app.editing.adapter import AdapterCapabilities
+from app.editing.capabilities import capabilities_for_operations
+from app.editing.registry import default_registry
 from app.models.audit import AuditLog
 from app.models.plugin import PluginState, utcnow
-from app.plugins.diagnostics import DiagnosticReport, run_checks
-from app.plugins.manifest import PluginManifest
+from app.plugins.diagnostics import CheckResult, DiagnosticReport, run_checks
+from app.plugins.manifest import PluginCapability, PluginManifest
 from app.plugins.registry import load_registry
 from app.plugins.schemas import (
     AuditEntry,
@@ -32,7 +34,7 @@ from app.plugins.schemas import (
 )
 
 INSTALLED_STATUSES = {"installed", "connected"}
-LIVE_CHECK_KINDS = {"binary", "command", "tcp", "http"}
+LIVE_CHECK_KINDS = {"binary", "command", "tcp", "http", "adapter"}
 
 
 def _now() -> datetime:
@@ -104,7 +106,9 @@ class PluginManager:
             diagnosis = DiagnosisSummary(
                 ran_at=state.last_diagnosis_at, ok=state.last_diagnosis_ok
             )
-        capabilities = self._capabilities(manifest, state)
+        adapter = default_registry.create(manifest.id) if default_registry.has(manifest.id) else None
+        adapter_caps = adapter.get_capabilities() if adapter else None
+        capabilities = self._capabilities(manifest, state, adapter_caps=adapter_caps)
         return PluginView(
             id=manifest.id,
             name=manifest.name,
@@ -125,41 +129,81 @@ class PluginManager:
             connected_at=state.connected_at,
             last_error=state.last_error,
             last_diagnosis=diagnosis,
-            checks_total=len(manifest.diagnostics),
+            checks_total=len(manifest.diagnostics) + (manifest.connection_type == "local-bridge"),
             requirements=manifest.requirements,
             permissions=manifest.permissions,
             tools=manifest.tools,
             capabilities=capabilities,
             declared_capabilities=manifest.capabilities,
             verified_capabilities=[item.id for item in capabilities if item.status == "verified"],
+            adapter_notes=adapter_caps.notes if adapter_caps else [],
             known_costs=manifest.known_costs,
             diagnostics=manifest.diagnostics,
         )
 
-    def _capabilities(self, manifest: PluginManifest, state: PluginState):
+    def _capabilities(
+        self, manifest: PluginManifest, state: PluginState, *,
+        adapter_caps: AdapterCapabilities | None = None,
+    ) -> list[PluginCapability]:
         if not default_registry.has(manifest.id):
             return manifest.capabilities
-        operations = default_registry.create(manifest.id).get_capabilities().operations
-        supported = {
-            EditorOperation.IMPORT_MEDIA: {"media.inspect"},
-            EditorOperation.CREATE_TIMELINE: {"media.cut", "media.concat"},
-            EditorOperation.RENDER_PREVIEW: {"render.final"},
-            EditorOperation.RENDER_FINAL: {"render.final", "audio.mix"},
-            EditorOperation.EXPORT_PROJECT: {"render.final"},
-        }
-        executable = set().union(*(supported.get(operation, set()) for operation in operations))
-        verified = set(state.config.get("ffmpeg_verified_capabilities", []))
+        capabilities = adapter_caps or default_registry.create(manifest.id).get_capabilities()
+        executable = capabilities.capability_ids
+        if executable is None:
+            executable = capabilities_for_operations(capabilities.operations)
+        verified = set(state.config.get("verified_capabilities", [])) | set(
+            state.config.get("ffmpeg_verified_capabilities", [])
+        )
         return [
-            capability.model_copy(update={"status": "verified" if capability.id in verified else ("declared" if capability.id in executable else "unsupported")})
+            capability.model_copy(update={"status": ("unsupported" if capability.id not in executable else "verified" if capability.id in verified else "declared")})
             for capability in manifest.capabilities
         ]
 
-    def _run_diagnostics(self, manifest: PluginManifest, state: PluginState) -> DiagnosticReport:
+    def _adapter_health(self, registered_id: str) -> dict[str, str]:
+        """Ask a registered adapter for a live channel, without guessing.
+
+        Manifests can prove files and variables. An adapter that owns a runtime
+        channel (a bridge, a server) is the only thing that can prove the channel
+        is alive, so its own health check is the evidence of record.
+        """
+        try:
+            adapter = default_registry.create(registered_id)
+            healthy = adapter.health_check()
+        except CapabilityNotAvailable:
+            return {
+                "status": "skip",
+                "evidence": "El adaptador no implementa health_check.",
+            }
+        except Exception:  # A diagnostic may not disclose adapter exception contents.
+            return {"status": "fail", "evidence": "Falló la comprobación del adaptador."}
+        if healthy is True:
+            return {
+                "status": "pass",
+                "evidence": "El adaptador confirmó una operación de salud real.",
+            }
+        detail = getattr(adapter, "last_health_error", None)
+        return {
+            "status": "fail",
+            "evidence": detail or "El adaptador no confirmó el canal en vivo.",
+        }
+
+    def _run_diagnostics(self, manifest: PluginManifest, state: PluginState, *, runtime: bool = True) -> DiagnosticReport:
         report = run_checks(
             manifest.id,
             manifest.diagnostics,
             default_timeout=settings.command_timeout_seconds,
         )
+        if runtime and manifest.connection_type == "local-bridge":
+            result = self._adapter_health(manifest.id) if default_registry.has(manifest.id) else {
+                "status": "fail", "evidence": "No hay adaptador registrado para el puente.",
+            }
+            passed = result["status"] == "pass"
+            report.checks.append(CheckResult(
+                id="adapter-health", label="Puente activo", kind="adapter",
+                status="pass" if passed else "fail", evidence=result["evidence"],
+            ))
+            report.summary["passed" if passed else "failed"] += 1
+            report.ok = report.ok and passed
         state.last_diagnosis_at = report.ran_at
         state.last_diagnosis_ok = report.ok
         self._persist(state)
@@ -197,8 +241,8 @@ class PluginManager:
         return ToolListResponse(
             plugin_id=manifest.id,
             note=(
-                "Herramientas declaradas por el manifiesto. En la Fase 1 no existe "
-                "adaptador ejecutable todavía: no hay verificación de ejecución."
+                "Herramientas declaradas por el manifiesto. Las capacidades solo pasan "
+                "a 'verified' tras una operación real completada por el adaptador."
             ),
             tools=manifest.tools,
         )
@@ -273,7 +317,7 @@ class PluginManager:
                 "no es posible verificar la instalación."
             )
 
-        report = self._run_diagnostics(manifest, state)
+        report = self._run_diagnostics(manifest, state, runtime=False)
         if not report.ok:
             failing = self._failing_checks(report)
             state.last_error = (
@@ -338,13 +382,13 @@ class PluginManager:
             state.connected = False
             state.connected_at = None
             state.last_error = (
-                "No se verificó ningún canal activo (binario, comando, TCP o HTTP)."
+                "No se verificó ningún canal activo (binario, comando, TCP, HTTP o adaptador)."
             )
             self._persist(state)
             self._audit(plugin_id, "connect", "error", state.last_error)
             raise DependencyUnavailable(
-                "No se puede marcar como conectado: el diagnóstico solo confirmó "
-                "archivos o variables, no un canal de ejecución real.",
+                "No se puede marcar como conectado: el diagnóstico no confirmó "
+                "un canal de ejecución real.",
                 details={
                     "checks": [check.model_dump() for check in report.checks],
                     "live_check_kinds": sorted(LIVE_CHECK_KINDS),
