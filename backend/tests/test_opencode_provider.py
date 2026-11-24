@@ -11,14 +11,17 @@ import pytest
 from app.ai import opencode
 from app.ai.errors import (
     AIAuthFailed, AIError, AIModelRequired, AIProviderUnavailable, AIServerUnavailable, AITimeout,
+    AIUnsupportedInput,
 )
 from app.ai.opencode import OpenCodeServerProvider
 
-MODEL = {"providerID": "fixture", "id": "fixture-chat", "enabled": True, "type": "chat"}
+MODEL = {"providerID": "fixture", "id": "fixture-chat", "enabled": True, "type": "chat",
+         "capabilities": {"input": ["text", "image"], "output": ["text"], "tools": True}}
 KEY = "fixture/fixture-chat"
 SESSION = "/api/session/ses_fixture"
 AUTH = "Basic " + base64.b64encode(b"opencode:test-password").decode()
 DENIED = [{"action": "*", "resource": "*", "effect": "deny"}]
+VISION_TEXT = "IMAGEN 1: Veo «PRUEBA-7431» sobre naranja."
 
 
 @pytest.fixture
@@ -32,6 +35,13 @@ def server():
         ("POST", "/api/session"): (200, {"data": {"id": "ses_fixture", "permissions": DENIED,
                                                  "model": {"providerID": "fixture", "id": "fixture-chat"}}}),
         ("POST", SESSION + "/generate"): (200, {"data": {"text": "respuesta real del fixture"}}),
+        ("POST", SESSION + "/prompt"): (200, {"data": {"id": "msg_fixture"}}),
+        ("POST", "/api/experimental/session/ses_fixture/wait"): (204, None),
+        ("GET", SESSION + "/message"): (200, {"data": [
+            {"type": "user", "content": [{"type": "text", "text": "entrada"}]},
+            {"type": "assistant", "finish": "stop", "error": None,
+             "content": [{"type": "text", "text": VISION_TEXT}]},
+        ]}),
         ("DELETE", SESSION): (204, None),
     }
 
@@ -70,7 +80,7 @@ def server():
 def test_catalog_and_transient_generation(server):
     url, _, calls = server
     provider = OpenCodeServerProvider(url, "test-password", 2, default_model=KEY)
-    assert provider.list_models() == {"models": [KEY], "default_model": KEY}
+    assert provider.list_models() == {"models": [KEY], "default_model": KEY, "vision_models": [KEY]}
     assert [entry[:2] for entry in calls] == [("GET", "/api/info"), ("GET", "/api/model")]
     calls.clear()
     assert provider.generate_text("entrada", "sistema") == "respuesta real del fixture"
@@ -87,7 +97,7 @@ def test_catalog_and_transient_generation(server):
 def test_missing_model_does_not_use_advertised_default(server):
     url, _, calls = server
     provider = OpenCodeServerProvider(url, "test-password", 2)
-    assert provider.list_models() == {"models": [KEY], "default_model": None}
+    assert provider.list_models() == {"models": [KEY], "default_model": None, "vision_models": [KEY]}
     assert [entry[:2] for entry in calls] == [("GET", "/api/info"), ("GET", "/api/model")]
     calls.clear()
     for operation in (provider.check_status, lambda: provider.generate_text("a", "b")):
@@ -195,4 +205,67 @@ def test_connection_check_requires_marker_empty_history_and_no_permission_reques
     responses["GET", SESSION + "/permission"] = (200, {"data": [{"id": "unexpected"}]})
     with pytest.raises(AIError, match="permisos pendientes"):
         provider.check_status()
+    assert calls[-1][:2] == ("DELETE", SESSION)
+
+
+def test_vision_uses_prompt_files_without_tools_and_deletes_session(server):
+    url, responses, calls = server
+    provider = OpenCodeServerProvider(url, "test-password", 2, KEY)
+    text = provider.describe_images(
+        [{"media_type": "image/jpeg", "data": "aGVsbG8="}], "sistema", "prompt de lote")
+    assert text == VISION_TEXT
+    assert calls[-1][:2] == ("DELETE", SESSION)
+    assert not any(path == SESSION + "/generate" for _, path, *_ in calls)
+    sent = next(entry for entry in calls if entry[:2] == ("POST", SESSION + "/prompt"))
+    assert sent[3]["files"] == [{"uri": "data:image/jpeg;base64,aGVsbG8=", "name": "imagen-1.jpg"}]
+    assert sent[3]["text"].startswith("sistema\n\nprompt de lote")
+
+
+def test_vision_503_names_model_and_deletes_session(server):
+    url, responses, calls = server
+    responses["POST", SESSION + "/prompt"] = (503, {"error": "raw upstream body"})
+    provider = OpenCodeServerProvider(url, "test-password", 2, KEY)
+    with pytest.raises(AIProviderUnavailable, match=f"{KEY}.*HTTP 503") as error:
+        provider.describe_images([{"media_type": "image/jpeg", "data": "aGVsbG8="}], "s", "p")
+    assert "raw upstream body" not in str(error.value)
+    assert calls[-1][:2] == ("DELETE", SESSION)
+
+
+def test_vision_rejects_any_non_text_part_and_deletes_session(server):
+    url, responses, calls = server
+    responses["GET", SESSION + "/message"] = (200, {"data": [
+        {"type": "assistant", "finish": "stop", "error": None,
+         "content": [{"type": "text", "text": "IMAGEN 1: parcial"},
+                     {"type": "tool", "tool": "bash"}]},
+    ]})
+    provider = OpenCodeServerProvider(url, "test-password", 2, KEY)
+    with pytest.raises(AIError, match="herramienta"):
+        provider.describe_images([{"media_type": "image/jpeg", "data": "aGVsbG8="}], "s", "p")
+    assert calls[-1][:2] == ("DELETE", SESSION)
+
+
+def test_vision_requires_a_model_that_accepts_images(server):
+    url, responses, calls = server
+    responses["GET", "/api/model"][1]["data"].append(
+        {**MODEL, "id": "text-only", "capabilities": {"input": ["text"]}})
+    provider = OpenCodeServerProvider(url, "test-password", 2, "fixture/text-only")
+    with pytest.raises(AIUnsupportedInput, match="no acepta imágenes"):
+        provider.ensure_vision()
+    assert not any(path == "/api/session" for _, path, *_ in calls)
+
+
+def test_vision_without_explicit_model_never_creates_a_session(server):
+    url, _, calls = server
+    with pytest.raises(AIModelRequired):
+        OpenCodeServerProvider(url, "test-password", 2).describe_images(
+            [{"media_type": "image/jpeg", "data": "aGVsbG8="}], "s", "p")
+    assert not any(path == "/api/session" for _, path, *_ in calls)
+
+
+def test_vision_timeout_still_deletes_the_session(server):
+    url, responses, calls = server
+    responses["POST", "/api/experimental/session/ses_fixture/wait"] = (599, None)
+    provider = OpenCodeServerProvider(url, "test-password", 0.05, KEY)
+    with pytest.raises(AITimeout):
+        provider.describe_images([{"media_type": "image/jpeg", "data": "aGVsbG8="}], "s", "p")
     assert calls[-1][:2] == ("DELETE", SESSION)

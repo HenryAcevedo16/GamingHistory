@@ -4,14 +4,20 @@ import json
 import os
 import subprocess
 import sys
+from threading import Event
 from typing import Protocol
 
-from app.ai.errors import AICLINotFound, AIError, AINotLoggedIn, AITimeout
+from app.ai.errors import AICLINotFound, AICancelled, AIError, AINotLoggedIn, AITimeout
 from app.core.config import BACKEND_ROOT
 
 
 class AIProvider(Protocol):
     def generate_text(self, prompt: str, system: str) -> str: ...
+
+    def describe_images(self, images: list[dict[str, str]], system: str, prompt: str,
+                        *, cancel: Event | None = None) -> str: ...
+
+    def ensure_vision(self) -> None: ...
 
 
 # The SDK merges options.env with os.environ. Start a separate Python process with
@@ -32,13 +38,17 @@ class ClaudeAgentSDKProvider:
         self.timeout = timeout
         self.model = model
 
-    def _run(self, prompt: str, system: str) -> dict:
+    def _run(self, prompt: str, system: str, images: list[dict[str, str]] | None = None) -> dict:
+        payload: dict[str, object] = {
+            "prompt": prompt, "system": system, "timeout": self.timeout, "model": self.model,
+        }
+        if images:
+            payload["images"] = images
         try:
             process = subprocess.run(
                 [sys.executable, "-E", "-m", "app.ai.worker"],
                 cwd=BACKEND_ROOT, env=worker_env(),
-                input=json.dumps({"prompt": prompt, "system": system,
-                                  "timeout": self.timeout, "model": self.model}).encode("utf-8"),
+                input=json.dumps(payload).encode("utf-8"),
                 capture_output=True, timeout=self.timeout + 5, check=True,
             )
             data = json.loads(process.stdout)
@@ -56,6 +66,17 @@ class ClaudeAgentSDKProvider:
 
     def generate_text(self, prompt: str, system: str) -> str:
         return self._run(prompt, system)["text"]
+
+    def describe_images(self, images: list[dict[str, str]], system: str, prompt: str,
+                        *, cancel: Event | None = None) -> str:
+        if cancel is not None and cancel.is_set():
+            raise AICancelled("Análisis cancelado.")
+        return self._run(prompt, system, images)["text"]
+
+    def ensure_vision(self) -> None:
+        # Claude Code recibe bloques de imagen en el mismo mensaje; se comprobó
+        # en real con herramientas desactivadas. No hay capacidades que consultar.
+        return None
 
     def check_status(self) -> dict:
         # Check the CLI's actual tool inventory and challenge it to use Read.

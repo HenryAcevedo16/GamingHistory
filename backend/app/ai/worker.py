@@ -17,6 +17,27 @@ from app.ai.errors import AICLINotFound, AIError, AINotLoggedIn, AITimeout
 _LOGIN_MESSAGE = "Claude Code no tiene una sesión de Claude activa. Ejecuta claude auth login."
 _DENIED = ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep",
            "WebFetch", "WebSearch", "Agent", "Task", "Skill", "ToolSearch"]
+_VISION_MEDIA = frozenset({"image/jpeg"})
+
+
+def _content(prompt: str, images: object) -> str | list[dict]:
+    """Bloques de imagen + texto. Solo JPEG reducido; nunca se registra su contenido."""
+    if not images:
+        return prompt
+    if not isinstance(images, list):
+        raise AIError("El lote de imágenes no es válido.")
+    blocks: list[dict] = []
+    for index, image in enumerate(images, start=1):
+        if (not isinstance(image, dict) or image.get("media_type") not in _VISION_MEDIA
+                or not isinstance(image.get("data"), str) or not image["data"]):
+            raise AIError("El lote contiene una imagen no válida para Claude.")
+        blocks.append({"type": "text", "text": f"Imagen {index}:"})
+        blocks.append({"type": "image", "source": {
+            "type": "base64", "media_type": image["media_type"], "data": image["data"],
+        }})
+    blocks.append({"type": "text", "text": prompt})
+    return blocks
+
 
 
 def find_cli() -> str:
@@ -48,7 +69,8 @@ def _cli(cli: str, cwd: str, deadline: float, *args: str) -> subprocess.Complete
                           timeout=remaining)
 
 
-async def query_text(sdk, *, cli: str, cwd: str, prompt: str, system: str, model: str | None) -> str:
+async def query_text(sdk, *, cli: str, cwd: str, prompt: str, system: str, model: str | None,
+                     images: object = None) -> str:
     options = sdk.ClaudeAgentOptions(
         cli_path=cli, cwd=cwd, model=model, system_prompt=system,
         tools=[], allowed_tools=[], disallowed_tools=_DENIED, max_turns=1,
@@ -62,10 +84,12 @@ async def query_text(sdk, *, cli: str, cwd: str, prompt: str, system: str, model
         stderr=lambda _: None,
     )
 
+    content = _content(prompt, images)
+
     async def input_messages():
         # Pass the text via stdin, not a CLI argument or a file. client_composed
         # prevents slash commands and @ references from being expanded.
-        yield {"type": "user", "message": {"role": "user", "content": prompt},
+        yield {"type": "user", "message": {"role": "user", "content": content},
                "client_composed": True, "session_id": "", "parent_tool_use_id": None}
 
     initialized = False
@@ -130,7 +154,8 @@ async def run(payload: dict, checks: dict) -> str:
         checks["session_active"] = True
         async with asyncio.timeout_at(deadline):
             text = await query_text(sdk, cli=cli, cwd=cwd, prompt=payload["prompt"],
-                                    system=payload["system"], model=payload["model"])
+                                    system=payload["system"], model=payload["model"],
+                                    images=payload.get("images"))
         checks["tools_disabled"] = True
         return text
 

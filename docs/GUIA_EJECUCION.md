@@ -16,6 +16,7 @@ Repo: https://github.com/HenryAcevedo16/GamingHistory  (local: E:\GamingHistory)
 | 8 Google Drive | Pospuesta |
 | 9 Asistente de texto | Verificado con Claude Code y SDK en Windows |
 | 9b Proveedor OpenCode | Verificado con OpenCode 2.4.1 y un modelo de ChatGPT en Windows |
+| 11 Visión bajo demanda | Verificada con OpenCode `openai/gpt-6.2-sol` y Claude Code en Windows |
 | 10 Selector de archivos, orden de clips y notas | Subida y timeline verificados en Edge; respaldos y contexto de IA cubiertos por pruebas |
 
 ## 1. Preparar (una sola vez)
@@ -191,6 +192,34 @@ en marcha, Python Playwright y Edge instalados:
 ```cmd
 python scripts\verify_opencode_selection_ui.py --web http://127.0.0.1:3000
 ```
+
+### Análisis de imágenes (Fase 11)
+
+1. En **Proyectos → Recursos → Análisis de imágenes con IA**, elige el proveedor. Para
+   OpenCode, pulsa **Cargar modelos** y elige uno con entrada de imagen. Solo aparecen
+   los modelos que anuncian esa capacidad; no se sustituye tu elección por otro modelo.
+2. Pulsa **Analizar** en una imagen o marca varias y pulsa **Analizar seleccionadas**.
+   El diálogo muestra el destino, la cantidad, los bytes de las copias reducidas y los lotes.
+   **Cancelar** no envía nada; **Enviar** comparte únicamente las copias JPEG con el proveedor.
+   El límite es de 32 imágenes y 8 MB de JPEG por operación, en lotes de hasta 8 imágenes.
+3. Revisa la propuesta. Puedes editarla, añadirla a la nota, reemplazar la nota o
+   descartarla. Nada se guarda antes de aceptar. Los enlaces detectados se muestran como
+   `[enlace omitido]`. Si el lote trae etiquetas incorrectas, se rechaza sin reenviarlo.
+
+El original nunca se modifica. No se analizan vídeos ni audios. Cancelar durante el envío
+detiene los siguientes lotes y solicita el cierre de la sesión de OpenCode; no deshace lo ya
+enviado. Con Claude Code, el lote en curso puede terminar o llegar a su tiempo de espera,
+pero se descarta su resultado y no se inician otros lotes.
+
+Desde la raíz, con FFmpeg y OpenCode configurados, esta prueba **envía una imagen sintética**
+por la misma ruta que Studio, sin tocar la base de proyectos:
+
+```cmd
+backend\.venv\Scripts\python.exe scripts\verify_phase11.py --model openai/gpt-6.2-sol
+```
+
+Añade `--claude` para enviarla también a Claude Code. Para probar solo la interfaz sin enviar
+imágenes, con Playwright y Edge instalados, ejecuta `python scripts\verify_phase11_ui.py`.
 
 ## 8. Importar y ordenar recursos
 

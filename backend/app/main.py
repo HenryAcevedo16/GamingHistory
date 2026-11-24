@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
+from app.ai.vision import cleanup_stale_dirs
 from app.api.routes import ai, backups, editing_router, exports, health, plugins, projects, renders, uploads
 from app.core.config import settings
 from app.core.db import init_db
@@ -24,6 +25,9 @@ logger = logging.getLogger("gaming-history-studio")
 async def lifespan(_: FastAPI):
     init_db()
     import app.editing.adapters  # noqa: F401
+    removed = cleanup_stale_dirs()
+    if removed:
+        logger.info("Se eliminaron %s temporales antiguos de análisis de imágenes.", removed)
     logger.info("Database ready at %s", settings.resolved_database_url)
     logger.info("Plugins directory: %s", settings.resolved_plugins_dir)
     yield

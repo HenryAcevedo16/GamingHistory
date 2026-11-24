@@ -9,6 +9,7 @@ import { appendMedia, chronological, emptyTrack, end, historyStep, initialHistor
   type Asset, type Item, type Kind, type MediaLane, type Placement, type Project, type Timeline, type Track } from "@/lib/timeline";
 import { ExportPanel, ProjectJobs } from "./project-output";
 import { AIAssistant } from "./ai-assistant";
+import { AssetAnalysis } from "./asset-analysis";
 import { field, message, panel, Problem, StudioPage } from "./studio-ui";
 import { TimelineBoard } from "./timeline-board";
 import { MediaQueue } from "./media-queue";
@@ -201,6 +202,16 @@ function Editor({ initial }: { initial: Project }) {
             return result;
           }} />
         </li>; })}</ul>}
+        <AssetAnalysis key={id} projectId={id} assets={assets} busy={busy} saveNote={async (assetId, note, onError) => {
+          let result: Asset | undefined;
+          await task(async () => {
+            const saved = await projects.saveNote(id, assetId, note);
+            result = saved;
+            setAssets((previous) => previous.map((entry) => entry.id === assetId ? saved : entry));
+            setVersion((value) => value + 1);
+          }, onError);
+          return result;
+        }} />
       </section>
       <section className={panel} aria-labelledby="timeline-heading">
         <TimelineBoard timeline={timeline} title={title} selected={selected} select={setSelected} change={replace} busy={busy} />

@@ -39,3 +39,13 @@ class AIModelRequired(AIError):
 class AIProviderUnavailable(AIError):
     code = "AI_PROVIDER_UNAVAILABLE"
     status_code = 503
+
+
+class AIUnsupportedInput(AIError):
+    code = "AI_MODEL_UNSUPPORTED_INPUT"
+    status_code = 422
+
+
+class AICancelled(AIError):
+    code = "AI_CANCELLED"
+    status_code = 499

@@ -113,10 +113,16 @@ export type AIProvider = keyof typeof aiProviders;
 export type AIStatus = { ready: true; cli_version?: string; tools_disabled: boolean } |
   { ready: false; code: string; message: string };
 // default_model is Studio's configured model, not OpenCode's advertised default.
-export type AIModelList = { models: string[]; default_model: string | null };
+export type AIModelList = { models: string[]; default_model: string | null; vision_models: string[] };
 type AISelection = { provider: AIProvider; model?: string };
 export type AICue = { id: string; start_seconds: number; duration_seconds: number; text: string };
 export type SubtitleMode = "generate" | "correct";
+export type VisionPreview = { images: { asset_id: string; bytes: number }[]; errors: VisionResult[];
+  total_bytes: number; batches: number };
+export type VisionResult = { asset_id: string; status: "ok" | "error"; description: string | null;
+  trimmed: boolean; urls_removed: number; code: string | null; message: string | null };
+export type VisionResponse = { provider: AIProvider; model: string | null; images: number; batches: number;
+  total_bytes: number; results: VisionResult[] };
 const aiAction = { "X-GHS-AI-Action": "confirm" };
 export const ai = {
   status: async (provider: AIProvider, model?: string) => (await request<{ providers: Record<AIProvider, AIStatus> }>(
@@ -130,6 +136,11 @@ export const ai = {
   subtitles: (text: string, mode: SubtitleMode, selection: AISelection, projectId: string) => request<{ srt: string; cues: AICue[] }>("/ai/subtitles", {
     ...json("POST", { text, mode, ...selection, project_id: projectId, confirmed: true }), headers: aiAction,
   }),
+  visionPreview: (projectId: string, assetIds: string[], signal?: AbortSignal) => request<VisionPreview>(
+    "/ai/vision/preview", { method: "POST", body: JSON.stringify({ project_id: projectId, asset_ids: assetIds }), signal }),
+  vision: (selection: AISelection, projectId: string, assetIds: string[], signal?: AbortSignal) => request<VisionResponse>(
+    "/ai/vision", { ...json("POST", { ...selection, project_id: projectId, asset_ids: assetIds, confirmed: true }),
+      headers: aiAction, signal }),
 };
 
 export type BackupSettings = { status: "ready" | "not_configured" | "error"; location: string; free_bytes: number | null; error?: string };

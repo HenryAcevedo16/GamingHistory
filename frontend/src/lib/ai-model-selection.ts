@@ -17,3 +17,9 @@ export function modelFromCatalog(catalog: AIModelList, current: string): string 
   // Never silently replace a remembered model that has disappeared.
   return wanted && catalog.models.includes(wanted) ? wanted : "";
 }
+
+export function visionModelFromCatalog(catalog: AIModelList, current: string): string {
+  const wanted = current || readOpenCodeModel();
+  // Solo un modelo elegido (o recordado) que acepte imágenes; nunca se adivina otro.
+  return wanted && catalog.vision_models.includes(wanted) ? wanted : "";
+}

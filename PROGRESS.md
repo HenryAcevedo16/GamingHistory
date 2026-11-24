@@ -1,7 +1,7 @@
 # PROGRESS — Gaming History Studio
 
 Bitácora operativa del repositorio. Describe lo que existe y lo que se verificó,
-no lo que se planea. Última actualización: **2026-11-24** (Fase 10 verificada en Edge y con pruebas).
+no lo que se planea. Última actualización: **2026-11-24** (Fase 11 verificada con ambos proveedores y en Edge).
 
 ## 1. Estado actual
 
@@ -934,3 +934,33 @@ las fases anteriores.
   openai/gpt-6.2-sol` generó el marcador real sin herramientas, confirmó la auditoría sin
   contenido y eliminó la sesión con HTTP 204; no consultó `/api/model/default`.
 - **No verificado:** no se envió ningún proyecto ni nota real; no se volvió a invocar Claude Code.
+
+## Fase 11 — Análisis de imágenes bajo demanda (2026-11-24)
+
+- **Estado:** implementada y verificada en Windows.
+- **Commit de cierre:** `Fase 11: analizar imágenes bajo demanda`.
+- **Implementado:** selección individual o múltiple de imágenes; vista previa local con FFmpeg
+  y consentimiento por envío con proveedor, modelo, número de imágenes, tamaño y lotes. Máximo
+  32 imágenes y 8 MB de JPEG reducidos por operación, lotes de hasta 8. Copia de hasta 1024 px,
+  sin EXIF/GPS y con transparencia sobre blanco. Los originales no se modifican. El servidor
+  vuelve a preparar y validar; limpia los temporales y elimina los de visión con más de una hora
+  al iniciar. No se procesan vídeo ni audio.
+- **Propuestas:** texto plano en español asignado por etiqueta; si falta o se repite una etiqueta,
+  se rechaza ese lote sin reenviarlo. Las propuestas pueden editarse, aceptarse o descartarse.
+  Solo la aceptación guarda en `Asset.note`; no hay cambios de esquema. Auditoría de metadatos
+  sin rutas, imágenes, notas, descripciones ni enlaces. OpenCode conserva la selección explícita,
+  la autenticación en loopback y el bloqueo de herramientas.
+- **Probado realmente:** `scripts/verify_phase11.py --claude` envió una imagen sintética
+  a OpenCode `openai/gpt-6.2-sol` y Claude Code sin herramientas. Ambos reconocieron la palabra
+  o el color; se verificaron el tamaño, el original intacto, el borrado de sesión de OpenCode
+  con HTTP 204 y la ausencia de residuos. En Edge, `scripts/verify_phase11_ui.py` verificó
+  confirmación, cancelación antes de enviar, selección múltiple, descarte y aceptación editable
+  con recarga, usando respuestas interceptadas. No se enviaron medios de proyectos reales.
+- **Regresión:** 188 pruebas de backend pasaron; 2 omitidas por requerir integraciones de edición
+  en vivo (Resolve y VectCut). Pasaron lint, TypeScript y 12 pruebas de frontend con
+  `node --experimental-strip-types --test tests/*.test.mjs`.
+- **Limitaciones:** al cancelar, OpenCode elimina la sesión; el proveedor pudo haber recibido
+  ya el lote. Claude Code no interrumpe el lote en curso, que puede agotar su timeout; no se
+  usarán sus resultados ni se enviarán más lotes. No se verificó en una segunda PC.
+- **Próximo paso:** activar la revisión en el próximo arranque habitual. No se reinició el
+  backend en ejecución. Instrucciones en `docs/GUIA_EJECUCION.md`.
