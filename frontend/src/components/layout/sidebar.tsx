@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   FolderKanban,
+  HardDrive,
   History,
   LayoutDashboard,
   ListChecks,
@@ -25,6 +26,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Extensiones", icon: Puzzle, href: "/extensions" },
   { label: "Dashboard", icon: LayoutDashboard, phase: "Fase 2" },
   { label: "Proyectos", icon: FolderKanban, href: "/projects" },
+  { label: "Respaldo", icon: HardDrive, href: "/backup" },
   { label: "Trabajos", icon: ListChecks, phase: "Fase 4" },
   { label: "Auditoría", icon: History, phase: "Fase 8" },
 ];

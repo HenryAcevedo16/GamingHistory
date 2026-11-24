@@ -1,7 +1,7 @@
 # PROGRESS — Gaming History Studio
 
 Bitácora operativa del repositorio. Describe lo que existe y lo que se verificó,
-no lo que se planea. Última actualización: **2026-11-23** (Fase 7 verificada en navegador).
+no lo que se planea. Última actualización: **2026-11-23** (Fase 8 verificada en navegador).
 
 ## 1. Estado actual
 
@@ -14,7 +14,7 @@ no lo que se planea. Última actualización: **2026-11-23** (Fase 7 verificada e
 | 5 | Integración DaVinci Resolve verificada | **Completada y verificada** (Free 21.0.4.5, puente in-app) |
 | 6 | Integración Descript opcional | Pendiente (sin código) |
 | 7 | Editor visual integrado con la timeline | **Completada y verificada** (Edge, FFmpeg, CapCut local y API viva de Resolve) |
-| 8 | Sincronización con Google Drive | Pendiente (sin código) |
+| 8 | Respaldo local de proyectos y restauración como copia | **Completada y verificada** (Edge, archivos y hashes reales) |
 
 Notas de alcance:
 
@@ -716,3 +716,62 @@ las fases anteriores.
     medios y resultados originales se guardaron en `backend/data/workspace`.
 - **Próximo paso:** repetir el envío a Resolve desde la UI cuando esté habilitado en la base habitual,
   con medios en una ruta admitida por ambas aplicaciones.
+
+## Fase 8 — Respaldo local (2026-11-23, hora local)
+
+- **Estado:** completada y verificada para respaldo local.
+- **Commit de cierre:** `fase 8: respaldo local` (commit que incluye esta entrada).
+- **Implementado:**
+  - `backend/app/backup/`: interfaz listar/guardar/leer/estado, destino local y servicio de
+    instantáneas. Carpeta por respaldo con fecha UTC e ID, `manifest.json` v1 con tamaños y
+    SHA-256, `timeline.json` con el proyecto validado y `metadata.json` con datos informativos
+    de borradores y trabajos. Los archivos de recursos son opt-in por respaldo. Los recursos
+    incluidos conservan sus IDs y se guardan en una nueva carpeta del workspace al restaurar.
+  - Destino local configurable en SQLite o mediante `GHS_BACKUP_DIR` si aún no hay ajuste
+    persistido. Se comprueba escritura al configurarlo, y espacio al previsualizar y guardar.
+    `GHS_BACKUP_MAX_BYTES` configura el límite por respaldo (20 GiB por defecto).
+  - `GET/PUT /api/backups/settings`, `POST /api/backups/preview`, `GET/POST /api/backups`,
+    `POST /api/backups/{id}/verify`, `POST /api/backups/{id}/restore`, `GET /api/backups/audit`.
+    Solo se guarda tras confirmación ligada al contenido y destino vistos. La restauración
+    valida hashes y timeline, y hace un `INSERT` con ID nuevo, sin sobrescribir.
+  - `/backup`, desde **Respaldo** en la barra lateral: configuración, selección de proyecto,
+    vista previa, confirmación, verificación, restauración e historial.
+- **Probado realmente (comando → resultado):**
+  - En `backend`: `python -m pytest -o addopts= -q -rs` → **70 passed, 2 skipped** (Resolve y
+    VectCut en vivo no activados), un aviso de deprecación TestClient/httpx.
+    `python -m compileall -q app` → exit 0.
+  - En `frontend`: `npm run lint`, `npx tsc --noEmit` y, con
+    `NEXT_PUBLIC_API_URL=http://127.0.0.1:8018`, `npm run build` → exit 0, incluida `/backup`.
+    `npm test` → **3 pasaron**.
+  - Desde la raíz: `python scripts/verify_phase8.py --web http://127.0.0.1:3018 --api http://127.0.0.1:8018 --project c100228451674b1a850aaf4660062f3c --evidence "$env:TEMP\opencode\ghs-phase8-evidence-final"`
+    → Edge 158.0.4370.33 headless, con el proyecto real de Fase 7 (dos clips y un subtítulo).
+    Respaldo predeterminado `20261124T024046143771Z-18e3f749e2b047a299a8c951a582928a` bajo
+    `backups-921cdf49/`: `manifest.json`, `timeline.json`, `metadata.json`. La copia
+    `336d8ec4f4e34673a7f2bb30ffc153ef` devolvió un timeline de **827 bytes idéntico byte por
+    byte**; el JSON completo del original no cambió. Una segunda copia con los dos MP4
+    conservó los IDs y bytes de los recursos en rutas nuevas del workspace.
+  - `Get-FileHash -LiteralPath <archivo> -Algorithm SHA256` y tamaños de `Get-Item`
+    → `timeline.json` (3637 B) y `metadata.json` (677 B) coincidieron con el manifiesto.
+    Los timeline exportados por API antes y después compartieron SHA-256
+    `4938f4e2b7bcce0f0ff99582bcd50b00a798f7ff459b1da79d9397a1efa1b5cc`.
+  - Editar en disco un byte de `timeline.json` en un tercer respaldo → hash distinto por
+    `Get-FileHash`; restaurar por UI → HTTP 422 `BACKUP_HASH_MISMATCH`, ningún proyecto insertado.
+    `POST /api/backups` con `confirmed=false` y vista previa válida → HTTP 409, total 3 → 3.
+    Ambos rechazos aparecen en `GET /api/backups/audit`.
+  - Capturas bajo `%TEMP%\opencode\ghs-phase8-evidence-final\`: `01-preview.png`,
+    `02-verified.png`, `03-restored.png`, `04-preview-assets.png` y `05-corruption-rejected.png`.
+- **No probado / limitaciones:**
+  - Solo destino local. El listado valida el manifiesto; la verificación de archivos completos
+    es explícita o al restaurar. SHA-256 detecta corrupción frente al manifiesto, no autentica
+    un manifiesto reemplazado. No se midió rendimiento cerca del límite de 20 GiB.
+  - Los metadatos históricos no se vuelven a importar como trabajos ejecutables. Una copia sin
+    medios necesita que los originales sigan disponibles en el workspace.
+- **Notas de entorno y estado:**
+  - 4 plugins detectados, 2 conectados, 0 errores de manifiesto según `/api/health`.
+  - Uvicorn (`python -m uvicorn app.main:app --host 127.0.0.1 --port 8018`, PID 36892) y Next
+    (`node node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3018`, PID 10708) levantados.
+    `GET :8018/api/health` y `GET :3018/backup` → 200.
+  - SQLite `backend/data/studio.db`: `backup_settings` guarda el destino de prueba, `audit_log`
+    registra las operaciones y `project_record` conserva el original y las copias verificadas.
+- **Próximo paso:** elegir una carpeta local definitiva desde **Respaldo**; cambiarla no mueve
+  los respaldos ya guardados.

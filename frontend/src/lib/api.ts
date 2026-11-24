@@ -76,6 +76,27 @@ export type Draft = { id: string; path: string };
 const json = (method: "POST" | "PUT", body: unknown) => ({ method, body: JSON.stringify(body) });
 const path = (id: string) => `/projects/${encodeURIComponent(id)}`;
 
+export type BackupSettings = { status: "ready" | "not_configured" | "error"; location: string; free_bytes: number | null; error?: string };
+export type BackupPreview = { location: string; free_bytes: number; total_bytes: number; revision: string;
+  include_assets: boolean; files: { name: string; label: string; size: number }[] };
+export type BackupItem = { id: string; verification: "unchecked" | "verified" | "invalid"; error?: string;
+  project_name?: string; created_at?: string; total_bytes?: number; assets?: number };
+export type BackupEvent = { id: number; action: string; status: "ok" | "denied" | "error"; detail: string; created_at: string };
+const backupPath = (id: string) => `/backups/${encodeURIComponent(id)}`;
+
+export const backups = {
+  settings: () => request<BackupSettings>("/backups/settings"),
+  configure: (folder: string) => request<BackupSettings>("/backups/settings", json("PUT", { folder })),
+  preview: (project_id: string, include_assets: boolean) => request<BackupPreview>("/backups/preview", json("POST", { project_id, include_assets })),
+  create: (project_id: string, preview: BackupPreview) => request<BackupItem>("/backups", json("POST", {
+    project_id, include_assets: preview.include_assets, revision: preview.revision, confirmed: true,
+  })),
+  list: () => request<{ items: BackupItem[] }>("/backups"),
+  verify: (id: string) => request<BackupItem>(`${backupPath(id)}/verify`, json("POST", {})),
+  restore: (id: string) => request<{ id: string; name: string }>(`${backupPath(id)}/restore`, json("POST", {})),
+  audit: () => request<BackupEvent[]>("/backups/audit"),
+};
+
 export const projects = {
   list: () => request<{ items: ProjectSummary[] }>("/projects"),
   create: (name: string) => request<Project>("/projects", json("POST", { name })),

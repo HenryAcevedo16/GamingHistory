@@ -73,7 +73,7 @@ Si una capacidad no está disponible, la UI debe mostrarlo con claridad (botón 
 5. Integración DaVinci Resolve verificada.
 6. Integración Descript opcional.
 7. Editor visual integrado con la línea de tiempo.
-8. Sincronización con Google Drive (respaldo del proyecto).
+8. Respaldo local de proyectos y restauración como copia. Los destinos remotos quedan fuera de esta fase.
 
 ## Criterio de éxito
 Desde la app se debe poder: seleccionar un documental, elegir un editor, enviar recursos y timeline, ejecutar la edición vía plugin, recuperar el resultado, revisarlo, continuar en la app externa si corresponde y guardar/respaldar el proyecto.

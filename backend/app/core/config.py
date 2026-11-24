@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     ]
     command_timeout_seconds: float = 15.0
     workspace_dir: Path = BACKEND_ROOT / "data" / "workspace"
+    backup_dir: Path | None = None
+    backup_max_bytes: int = 20 * 1024**3
     log_level: str = "INFO"
 
     @property
