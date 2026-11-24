@@ -1,7 +1,7 @@
 # PROGRESS — Gaming History Studio
 
 Bitácora operativa del repositorio. Describe lo que existe y lo que se verificó,
-no lo que se planea. Última actualización: **2026-11-23** (Fase 9b verificada con OpenCode y en navegador).
+no lo que se planea. Última actualización: **2026-11-24** (Fase 10 verificada en Edge y con pruebas).
 
 ## 1. Estado actual
 
@@ -17,6 +17,7 @@ no lo que se planea. Última actualización: **2026-11-23** (Fase 9b verificada 
 | 8 | Respaldo local de proyectos y restauración como copia | **Completada y verificada** (Edge, archivos y hashes reales) |
 | 9 | Asistente personal de guion y subtítulos vía Claude Agent SDK | **Completada y verificada** (Claude Code y Edge reales) |
 | 9b | OpenCode V2 elegible en el asistente, modelos reales y diagnóstico manual | **Completada y verificada** (OpenCode 2.4.1 con ChatGPT y Edge) |
+| 10 | Importación con selector, orden de clips y notas | **Completada y verificada** (Edge, FFmpeg, SQLite y respaldos reales; contexto de IA probado sin envío externo) |
 
 Notas de alcance:
 
@@ -865,3 +866,51 @@ las fases anteriores.
   local y su configuración deben ser de confianza, y el servicio del modelo puede ser remoto.
 - **Estado y próximo paso:** se apagaron los procesos temporales y se retiró su contraseña.
   Configurar `backend/.env` y repetir la verificación en la otra PC.
+
+## Fase 10 — Selector, orden de clips y notas (2026-11-24)
+
+- **Estado:** completada para el alcance descrito; se verificó el flujo en una PC.
+- **Commit de cierre:** `Fase 10: importar archivos, ordenar clips y guardar notas` (incluye esta entrada).
+- **Implementado:**
+  - `POST /api/projects/{id}/assets/upload`: multipart streaming al workspace, resultados por
+    archivo, máximo de 32 por petición y 2 GiB por archivo (`GHS_UPLOAD_MAX_BYTES`).
+    Comprobación de nombre, extensión, colisiones por proyecto y contenido mediante FFmpeg
+    conectado. Se comparte el flujo de inspección y alta con `POST .../media`. El lote confirma
+    recursos válidos y auditoría juntos, sin guardar copias fallidas ni modificar originales.
+  - Recursos: selector múltiple y arrastre, progreso y errores por archivo, notas antes de subir
+    o editables después, cola con teclado/ratón y pistas compatibles. Vídeo, imagen y narración
+    se añaden en secuencia; elegir música de fondo propone empezar en 0 en pista independiente.
+    Inicio configurable por archivo. Mover antes/después recompacta la pista desde 0 e integra
+    deshacer/rehacer. Las pistas bloqueadas se protegen en la UI y al validar/guardar la timeline.
+  - `Asset.note` opcional dentro de `project_record.payload` (sin nueva tabla ni migración SQL).
+    Los proyectos antiguos cargan con `note=null`. Respaldos v2 llevan las notas en timeline y
+    manifiesto; se validan longitud, saneado, coincidencia y hash. Se acepta restauración v1 sin
+    notas. El asistente recibe nombre, tipo y duración por recurso, y solo el plan recibe notas
+    como datos JSON delimitados. Aviso en UI; ninguna nota en auditoría.
+- **Probado realmente:**
+  - En `backend/`: `.\.venv\Scripts\python.exe -m pytest -q -o addopts= -rs` → **145 pasaron,
+    2 omitidas** (Resolve/VectCut en vivo). Incluye ffprobe con medios válidos e inválidos,
+    render de un PNG a MP4 de 1 s con FFmpeg, desconexión con escritura y limpieza, disco
+    lleno provocado con error de escritura en prueba, colisiones, proyecto sin `note`, restaurar
+    v1 y ciclo v2 con hash y nota íntegra. Pruebas del límite y saneado en el manifiesto y de
+    privacidad del mensaje de IA (proveedor de prueba, sin conexión externa).
+  - En `frontend/`: `npm test` → **9 pasaron**; `npm run lint`, `npx tsc --noEmit` y
+    `npm run build` → correctos. `python -m compileall -q app` → correcto.
+  - `python scripts/verify_phase10.py --api http://127.0.0.1:8020 --web http://127.0.0.1:3020
+    --workspace <workspace aislado> --evidence <carpeta externa> --exercise-cancel` → **Edge
+    158.0.4370.33**: dos MP4, dos WAV y un PNG copiados con SHA-256 idéntico al original, más un
+    WAV inválido rechazado. Teclado para reordenar, compactar, deshacer y rehacer; guardado y
+    reapertura: vídeos a 0 y 1 s, narración a 2 s, música y PNG a 0 en pistas separadas.
+    Nota editada y persistida. Arrastre en navegador y cancelación observada tras escritura
+    parcial en disco: se borró la copia y no se creó otro recurso. Sin solicitudes a IA.
+  - Evidencia: `%TEMP%\opencode\ghs-phase10-e9d0632f\evidence\phase10-3ef4b998\`,
+    `01-cola.png` y `02-reabierto.png`. Base y workspace aislados, FFmpeg instalado/conectado
+    allí; la prueba no usó medios ni proyectos personales.
+- **No probado / deuda:** no se probó la otra PC, no se llenó un disco físicamente, no se
+  enviaron notas a proveedores reales y no se repitieron exportaciones en CapCut o Resolve.
+  Sin arrastre dedicado para reordenar clips ni auditoría formal con lector de pantalla. Cada
+  copia ocupa espacio completo, los duplicados no se deduplican y no hay recuperación automática
+  de restos tras una terminación forzada. FFmpeg sigue sin rellenar huecos de vídeo ni componer
+  múltiples pistas de vídeo.
+- **Próximo paso:** actualizar ambas PC a la misma revisión, instalar dependencias y comprobar
+  traslado con respaldo v2 incluidas las copias de medios. Instrucciones en `docs/GUIA_EJECUCION.md`.

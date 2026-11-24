@@ -12,9 +12,10 @@ from app.core.errors import InvalidOperation
 from app.editing.adapter import EditorOperation, execute_operation
 from app.editing.converters import UnsupportedElement
 from app.editing.drafts import DraftResult, list_drafts
+from app.editing.notes import NoteText, sanitize_note
 from app.editing.persistence import ProjectRepository
 from app.editing.registry import default_registry
-from app.editing.timeline import Project, TimelinePayload
+from app.editing.timeline import Asset, Project, StrictModel, TimelinePayload
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -86,6 +87,7 @@ def replace_project(
     payload: Project,
     repository: ProjectRepository = Depends(_repository),
 ) -> Project:
+    repository.begin_write()
     repository.get_record(project_id)
     project = Project.model_validate({**payload.model_dump(), "id": project_id})
     return repository.save(project)
@@ -97,9 +99,27 @@ class ScriptPlanRequest(BaseModel):
     text: str = Field(min_length=1, max_length=60000)
 
 
+class AssetNoteRequest(StrictModel):
+    note: NoteText | None = Field(repr=False)
+
+
+@router.put("/{project_id}/assets/{asset_id}/note", response_model=Asset)
+def update_asset_note(project_id: str, asset_id: str, payload: AssetNoteRequest,
+                      repository: ProjectRepository = Depends(_repository)) -> Asset:
+    repository.begin_write()
+    project = repository.get(project_id)
+    asset = next((entry for entry in project.assets if entry.id == asset_id), None)
+    if asset is None:
+        raise InvalidOperation("El recurso no pertenece al proyecto.", code="ASSET_NOT_FOUND", status_code=404)
+    asset.note = (sanitize_note(payload.note) or None) if payload.note is not None else None
+    repository.save(project)
+    return asset
+
+
 @router.put("/{project_id}/script-plan", response_model=ScriptPlanRequest)
 def save_script_plan(project_id: str, payload: ScriptPlanRequest,
-                     repository: ProjectRepository = Depends(_repository)) -> ScriptPlanRequest:
+                      repository: ProjectRepository = Depends(_repository)) -> ScriptPlanRequest:
+    repository.begin_write()
     project = repository.get(project_id)
     project.metadata["script_plan"] = payload.text
     repository.save(project)
@@ -120,11 +140,15 @@ def replace_timeline(
     payload: TimelinePayload,
     repository: ProjectRepository = Depends(_repository),
 ) -> Project:
+    repository.begin_write()
     project = repository.get(project_id)
     return repository.save(_validated_timeline(project, payload))
 
 
 def _validated_timeline(project: Project, payload: TimelinePayload) -> Project:
+    proposed = {track.id: track for track in payload.tracks}
+    if any(track.locked and proposed.get(track.id) != track for track in project.tracks):
+        raise InvalidOperation("No se puede modificar ni quitar una pista bloqueada.", code="TRACK_LOCKED")
     try:
         return project.with_timeline(payload)
     except ValidationError as exc:

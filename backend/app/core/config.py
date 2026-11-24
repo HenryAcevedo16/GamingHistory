@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     ]
     command_timeout_seconds: float = 15.0
     workspace_dir: Path = BACKEND_ROOT / "data" / "workspace"
+    upload_max_bytes: int = Field(default=2 * 1024**3, gt=0)
     backup_dir: Path | None = None
     backup_max_bytes: int = 20 * 1024**3
     ai_timeout_seconds: float = Field(default=60, gt=0, le=300)

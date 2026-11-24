@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Column
+from sqlalchemy import Column, text
 from sqlalchemy.types import JSON
 from sqlmodel import Field, Session, SQLModel, select
 
@@ -57,7 +57,11 @@ class ProjectRepository:
     def get(self, project_id: str) -> Project:
         return self._decode(self.get_record(project_id))
 
-    def save(self, project: Project) -> Project:
+    def begin_write(self) -> None:
+        # Serialize read/modify/write updates to the canonical JSON document.
+        self.session.execute(text("BEGIN IMMEDIATE"))
+
+    def stage(self, project: Project) -> ProjectRecord:
         project.updated_at = _utcnow()
         record = self.session.get(ProjectRecord, project.id)
         if record is None:
@@ -73,6 +77,10 @@ class ProjectRepository:
             record.updated_at = project.updated_at
             record.payload = project.model_dump(mode="json")
         self.session.add(record)
+        return record
+
+    def save(self, project: Project) -> Project:
+        record = self.stage(project)
         self.session.commit()
         self.session.refresh(record)
         return self._decode(record)

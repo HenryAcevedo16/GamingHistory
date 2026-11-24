@@ -15,7 +15,9 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.editing.notes import NoteText, sanitize_note
 
 _EPSILON = 1e-6
 
@@ -41,6 +43,12 @@ class Asset(StrictModel):
     kind: Literal["video", "audio", "image", "subtitle", "other"] = "video"
     duration_seconds: float = Field(default=0.0, ge=0.0)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    note: NoteText | None = Field(default=None, repr=False)
+
+    @field_validator("note")
+    @classmethod
+    def clean_note(cls, value: str | None) -> str | None:
+        return (sanitize_note(value) or None) if value is not None else None
 
 
 class Scene(StrictModel):

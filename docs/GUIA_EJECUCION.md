@@ -16,6 +16,7 @@ Repo: https://github.com/HenryAcevedo16/GamingHistory  (local: E:\GamingHistory)
 | 8 Google Drive | Pospuesta |
 | 9 Asistente de texto | Verificado con Claude Code y SDK en Windows |
 | 9b Proveedor OpenCode | Verificado con OpenCode 2.4.1 y un modelo de ChatGPT en Windows |
+| 10 Selector de archivos, orden de clips y notas | Subida y timeline verificados en Edge; respaldos y contexto de IA cubiertos por pruebas |
 
 ## 1. Preparar (una sola vez)
 ```powershell
@@ -54,7 +55,7 @@ Revisa `$Repo` y `$VectCut` al inicio de `iniciar-studio.ps1`. Doble clic en `in
 
 ## 5. Probar el flujo
 1. /projects: crear proyecto.
-2. Importar clips (dentro de GHS_WORKSPACE_DIR).
+2. Importar clips con **Elegir archivos** o **Importar por ruta local** (ver sección 8).
 3. Colocar, mover, recortar, editar subtítulo, guardar, recargar y comprobar persistencia.
 4. Provocar solapamiento: debe rechazarse con motivo.
 5. "Renderizar con FFmpeg": esperar el trabajo, descargar y abrir el MP4.
@@ -96,6 +97,10 @@ Para configurar el backend, usa `GHS_AI_TIMEOUT_SECONDS`
   ya temporizado en SRT y permite subdividir sus intervalos. No hay
   transcripción de audio. La aplicación rechaza una salida SRT inválida,
   solapada o con tiempos fuera de los permitidos.
+- Al pedir un **plan de guion y cortes**, se envían también el nombre de archivo, tipo,
+  duración y nota guardada de cada recurso. Para **subtítulos**, se envían nombre,
+  tipo y duración, **sin notas**. No se mandan archivos, rutas, IDs ni metadatos técnicos
+  de los recursos. No escribas rutas ni secretos en las notas. La auditoría no guarda el texto.
 - Tras revisar, guarda el plan textual en el proyecto (no cambia cortes) o
   añade los subtítulos como pista nueva. Para persistir la pista, pulsa
   **Guardar timeline**. También puedes descartar la propuesta.
@@ -173,6 +178,63 @@ Usa `--model <proveedor/modelo>` para elegir un modelo distinto. Si no puede
 contactar al servidor, autenticar o generar, termina con **No verificado** y
 código distinto de cero. Al enviar texto, la inferencia puede salir de la PC
 hacia el servicio del modelo elegido; lo local es la conexión de Studio a OpenCode.
+
+## 8. Importar y ordenar recursos
+
+1. En **Proyectos → Recursos**, pulsa **Elegir archivos** o suelta varios sobre la zona de
+   importación. Puedes escribir una **nota opcional** junto a cada archivo antes de pulsar
+   **Subir archivos**. Cada uno muestra su progreso y, si falla, su motivo. Cancelar detiene
+   lo que reste del lote; los recursos ya guardados se quedan en el proyecto.
+2. Para cambiar el orden usa **Subir** y **Bajar** (↑/↓ en la cola; Tab y Enter o Espacio
+   funcionan igual que el ratón). La cola arranca en el orden que entrega el selector del
+   navegador. Quitar una fila de la cola no borra la copia que ya importaste.
+3. Elige la pista compatible y el **Inicio** de cada archivo:
+   - **Después del anterior** es el modo inicial para vídeo, imágenes y audio narrado.
+     La secuencia se añade al final de las pistas de destino y avanza en el orden de la
+     cola, aunque cambie de vídeo a audio. Una imagen entra como un clip de 1 s.
+   - Para música, en **Uso** selecciona **Música de fondo**. Pone **Empezar en 0** de
+     forma predeterminada, sin inferir si el archivo contiene voz o música. Puedes cambiar
+     el inicio manualmente para cualquier recurso. Los clips que empiezan en 0 no desplazan
+     la secuencia y van a una pista nueva por defecto; también puedes elegir una pista
+     compatible existente si su intervalo está libre.
+   - Las pistas bloqueadas no se modifican. Si hay solapamiento en una misma pista, el lote
+     no se coloca: cambia el inicio o el destino. Las pistas distintas pueden sonar a la vez.
+4. Pulsa **Añadir todos en este orden**. Para reordenar clips ya colocados, selecciona uno y
+   usa **Mover antes** o **Mover después**: mueve una posición y recompacta esa pista desde
+   0 s, sin huecos ni solapes; no mueve otras pistas. Usa **Deshacer** o **Rehacer** para
+   volver al estado anterior o recuperarlo. Pulsa **Guardar timeline** antes de salir.
+5. Edita las notas en cada recurso y pulsa **Guardar nota**; borrar el texto la elimina.
+   Admite hasta 500 caracteres en texto plano. Solo se envían al pedir un plan de IA.
+
+### Archivos y espacio en disco
+
+- El selector **copia** dentro de `GHS_WORKSPACE_DIR` y no modifica los originales. Usa
+  nombres seguros y, si hay duplicados en el lote o el proyecto, añade un sufijo. Cada
+  solicitud usa una subcarpeta propia. **Importar por ruta local** es la
+  opción secundaria: solo acepta archivos que ya estén en el workspace y no hace otra copia.
+- Extensiones de subida: MP4, MOV, M4V, MKV, WebM, AVI; M4A, MP3, WAV, FLAC, OGG, Opus;
+  PNG, JPG/JPEG, WebP y BMP. Hace falta FFmpeg conectado para que `ffprobe` compruebe el
+  contenido. Una extensión válida no basta; tampoco garantiza compatibilidad con todos los editores.
+- El límite es **2 GiB por archivo** (2.147.483.648 bytes). Para cambiarlo, añade
+  `GHS_UPLOAD_MAX_BYTES=<bytes>` a `backend/.env` y reinicia el backend.
+- Prevé espacio para una copia completa por recurso: volver a subirlo consume espacio adicional.
+  Un respaldo con medios vuelve a copiarlos. Ni quitar de la cola ni deshacer una colocación
+  elimina archivos. Un cierre forzado del proceso o un corte eléctrico puede dejar una carpeta
+  de subida sin publicar; Studio no borra carpetas automáticamente al reiniciar.
+- El timeline unificado conserva los inicios guardados, pero el render FFmpeg aún advierte que
+  no rellena huecos de vídeo ni mezcla varias pistas de vídeo. Revisa la comprobación previa
+  al enviar a un editor.
+
+### Mover un proyecto entre casa y trabajo
+
+Mantén **la misma versión en ambas PC**: ejecuta `git pull` en las dos, instala las
+dependencias actualizadas de `backend/requirements.txt` y reinicia Studio. Los respaldos
+nuevos son **v2**; **no se pueden restaurar con versiones anteriores de Studio**. Esta
+versión aún restaura v1, sin notas; los proyectos antiguos cargan con notas vacías y no
+necesitan migración manual. No abras una SQLite ya guardada con el esquema nuevo en una
+versión anterior. Para trasladar el proyecto, marca **Incluir archivos de
+recursos** al crear el respaldo. Las notas se guardan como texto en el JSON y el manifiesto,
+así que trata la carpeta del respaldo como material del proyecto.
 Studio usa una sesión nueva con todos los permisos denegados, la generación
 transitoria de texto (sin bucle de agente) y borra la sesión al terminar.
 La auditoría de Studio tampoco guarda texto. Esta integración supone un servidor

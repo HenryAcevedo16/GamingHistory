@@ -14,6 +14,8 @@ from app.core.db import engine, get_session
 from app.core.errors import InvalidOperation
 from app.editing.adapter import EditorOperation, execute_operation
 from app.editing.jobs import JobRepository, RenderJob
+from app.editing.media_import import commit_imports, inspect_asset
+from app.editing.notes import NoteText
 from app.editing.persistence import ProjectRepository
 from app.editing.registry import default_registry
 from app.editing.revision import check_revision
@@ -26,6 +28,7 @@ router = APIRouter(tags=["ffmpeg", "jobs"])
 class ImportMediaRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str = Field(min_length=1)
+    note: NoteText | None = Field(default=None, repr=False)
 
 
 class ImportMediaResponse(BaseModel):
@@ -78,21 +81,10 @@ def import_media(
     payload: ImportMediaRequest,
     session: Session = Depends(get_session),
 ) -> ImportMediaResponse:
-    project = ProjectRepository(session).get(project_id)
-    adapter = default_registry.create("ffmpeg")
-    inspected = execute_operation(adapter, EditorOperation.IMPORT_MEDIA, {"paths": [payload.path]})[0]
-    kind = "video" if any(stream.get("codec_type") == "video" for stream in inspected["streams"]) else "audio"
-    asset = Asset(
-        id=Path(inspected["path"]).stem + "-" + str(len(project.assets) + 1),
-        name=Path(inspected["path"]).name,
-        path=inspected["path"],
-        kind=kind,
-        duration_seconds=inspected["duration_seconds"],
-        metadata={"streams": inspected["streams"]},
-    )
-    project = Project.model_validate({**project.model_dump(), "assets": [*project.assets, asset]})
-    ProjectRepository(session).save(project)
-    _audit(session, "import_media", "ok", f"Proyecto {project_id}: {asset.path}")
+    ProjectRepository(session).get_record(project_id)
+    session.rollback()  # no project transaction held while ffprobe runs
+    asset = inspect_asset(payload.path, payload.note)
+    commit_imports(session, project_id, [asset], "import_media")
     return ImportMediaResponse(asset=asset)
 
 

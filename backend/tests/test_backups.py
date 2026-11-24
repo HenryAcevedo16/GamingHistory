@@ -9,10 +9,11 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.backup.destination import LocalDestination
-from app.backup.format import MANIFEST, TIMELINE, BackupError, Manifest
+from app.backup.format import MANIFEST, TIMELINE, BackupError, Manifest, json_bytes
 from app.backup.service import BackupService
 from app.core.config import PROJECT_ROOT, settings
 from app.core.db import get_session
+from app.editing.persistence import ProjectRecord
 from app.main import app
 
 
@@ -64,6 +65,93 @@ def create(client, project_id, **extra):
     return response.json(), plan
 
 
+def rewrite_timeline(folder, payload, manifest):
+    data = json_bytes(payload)
+    (folder / TIMELINE).write_bytes(data)
+    entry = next(entry for entry in manifest["files"] if entry["name"] == TIMELINE)
+    entry.update(size=len(data), sha256=hashlib.sha256(data).hexdigest())
+    (folder / MANIFEST).write_bytes(json_bytes(manifest))
+
+
+def test_existing_project_json_and_v1_backup_without_notes(studio):
+    client, root, _, project_id, engine = studio
+    with Session(engine) as session:
+        record = session.get(ProjectRecord, project_id)
+        old = dict(record.payload)
+        old["assets"] = [{k: v for k, v in asset.items() if k != "note"} for asset in old["assets"]]
+        record.payload = old
+        session.commit()
+
+    project = client.get(f"/api/projects/{project_id}").json()
+    assert project["assets"][0]["note"] is None
+    with Session(engine) as session:
+        assert "note" not in session.get(ProjectRecord, project_id).payload["assets"][0]
+
+    created, _ = create(client, project_id, include_assets=True)
+    folder = root / created["id"]
+    manifest = json.loads((folder / MANIFEST).read_bytes())
+    manifest["schema_version"] = 1
+    manifest.pop("asset_notes")
+    rewrite_timeline(folder, old, manifest)
+    route = f"/api/backups/{folder.name}"
+    assert client.post(route + "/verify").status_code == 200
+    restored = client.post(route + "/restore")
+    assert restored.status_code == 201
+    assert client.get(f"/api/projects/{restored.json()['id']}").json()["assets"][0]["note"] is None
+
+
+def test_v2_round_trip_preserves_note_manifest_hash_and_media(studio):
+    client, root, _, project_id, _ = studio
+    note = "Entrevista 🎧\nUsar solo los primeros 2 min."
+    url = f"/api/projects/{project_id}/assets/media/note"
+    assert client.put(url, json={"note": f" {note}\u202e "}).json()["note"] == note
+    created, _ = create(client, project_id, include_assets=True)
+    folder = root / created["id"]
+    manifest = json.loads((folder / MANIFEST).read_bytes())
+    assert manifest["asset_notes"] == {"media": note}
+    for item in manifest["files"]:
+        data = (folder / item["name"]).read_bytes()
+        assert len(data) == item["size"] and hashlib.sha256(data).hexdigest() == item["sha256"]
+    route = f"/api/backups/{folder.name}"
+    assert client.post(route + "/verify").json()["verification"] == "verified"
+    restored = client.post(route + "/restore")
+    assert restored.status_code == 201
+    asset = client.get(f"/api/projects/{restored.json()['id']}").json()["assets"][0]
+    assert asset["note"] == note
+    assert Path(asset["path"]).read_bytes() == b"media-fixture"
+    assert "Entrevista" not in json.dumps(client.get("/api/backups/audit").json(), ensure_ascii=False)
+
+
+@pytest.mark.parametrize("bad", ["x" * 501, "texto\u202e", " nota", "nota cambiada"])
+def test_v2_rejects_invalid_or_mismatched_notes(studio, bad):
+    client, root, _, project_id, _ = studio
+    client.put(f"/api/projects/{project_id}/assets/media/note", json={"note": "Nota original"})
+    created, _ = create(client, project_id)
+    folder = root / created["id"]
+    manifest = json.loads((folder / MANIFEST).read_bytes())
+    manifest["asset_notes"]["media"] = bad
+    (folder / MANIFEST).write_bytes(json_bytes(manifest))
+    route = f"/api/backups/{folder.name}"
+    for operation in ("verify", "restore"):
+        response = client.post(f"{route}/{operation}")
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "BACKUP_INVALID"
+    assert client.get("/api/projects").json()["total"] == 1
+
+
+def test_v2_rejects_unsanitized_timeline_even_with_recomputed_hash(studio):
+    client, root, _, project_id, _ = studio
+    client.put(f"/api/projects/{project_id}/assets/media/note", json={"note": "Nota original"})
+    created, _ = create(client, project_id)
+    folder = root / created["id"]
+    manifest = json.loads((folder / MANIFEST).read_bytes())
+    timeline = json.loads((folder / TIMELINE).read_bytes())
+    timeline["assets"][0]["note"] += "\u0000"
+    rewrite_timeline(folder, timeline, manifest)
+    response = client.post(f"/api/backups/{folder.name}/restore")
+    assert response.status_code == 422 and "no saneada" in response.json()["error"]["message"]
+
+
 def test_manifest_hashes_metadata_and_exact_timeline_copy(studio):
     client, root, _, project_id, engine = studio
     from app.editing.drafts import DraftResult
@@ -77,7 +165,7 @@ def test_manifest_hashes_metadata_and_exact_timeline_copy(studio):
     created, plan = create(client, project_id)
     folder = root / created["id"]
     manifest = json.loads((folder / MANIFEST).read_bytes())
-    assert manifest["schema_version"] == 1 and manifest["project_id"] == project_id
+    assert manifest["schema_version"] == 2 and manifest["project_id"] == project_id
     assert manifest["project_name"] == "Prueba con clips" and manifest["created_at"].endswith("Z")
     assert {entry.name for entry in folder.iterdir()} == {MANIFEST, TIMELINE, "metadata.json"}
     assert sum(entry.stat().st_size for entry in folder.iterdir()) == plan["total_bytes"]

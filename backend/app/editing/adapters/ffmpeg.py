@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from app.core.db import engine
 from app.editing.adapter import AdapterCapabilities, EditorAdapter, EditorOperation
 from app.editing.converters import ConversionResult, UnsupportedElement
 from app.editing.jobs import JobRepository
+from app.editing.media_formats import FORMATS, IMAGE_EXTENSIONS
 from app.editing.registry import register_adapter
 from app.editing.timeline import Asset, AudioTrack, Project, SubtitleTrack, VideoTrack
 from app.models.plugin import PluginState
@@ -131,6 +133,10 @@ class FFmpegConverter:
             if clip.effects:
                 unsupported.append(UnsupportedElement(path=f"clips.{clip.id}.effects", kind="effects", reason="Los efectos no se exportan en Fase 3.", element_id=clip.id))
             width, height = target_size
+            if asset.kind == "image":
+                inputs += ["-protocol_whitelist", "file", "-loop", "1", "-pattern_type", "none", "-f", "image2"]
+            elif demuxer := FORMATS.get(source.suffix.lower()):
+                inputs += ["-protocol_whitelist", "file", "-format_whitelist", demuxer]
             inputs += ["-ss", f"{clip.source_in_seconds:g}", "-t", f"{clip.duration_seconds:g}", "-i", str(source)]
             filters.append(
                 f"[{input_index}:v]setpts=PTS-STARTPTS,"
@@ -167,6 +173,8 @@ class FFmpegConverter:
                 unsupported.append(UnsupportedElement(path=f"audio.{clip.id}.effects", kind="effects", reason="Los efectos de audio no se exportan en Fase 3.", element_id=clip.id))
             if clip.fade_in_seconds or clip.fade_out_seconds:
                 unsupported.append(UnsupportedElement(path=f"audio.{clip.id}.fades", kind="audio_fade", reason="Los fundidos de audio no se exportan en Fase 3.", element_id=clip.id))
+            if demuxer := FORMATS.get(source.suffix.lower()):
+                inputs += ["-protocol_whitelist", "file", "-format_whitelist", demuxer]
             inputs += ["-ss", f"{clip.source_in_seconds:g}", "-t", f"{clip.duration_seconds:g}", "-i", str(source)]
             delay = round(clip.start_seconds * 1000)
             filters.append(f"[{input_index}:a]asetpts=PTS-STARTPTS,volume={10 ** (clip.gain_db / 20):.8f},adelay={delay}:all=1[am{input_index}]")
@@ -202,11 +210,36 @@ class FFmpegAdapter(EditorAdapter):
             path = workspace_path(value)
             if not path.is_file():
                 raise InvalidOperation(f"No existe el medio local '{path}'.")
-            result = run_command("ffprobe", ["-v", "error", "-show_format", "-show_streams", "-of", "json", str(path)], timeout=settings.command_timeout_seconds, allowed_binaries=_BINARIES, cwd=settings.resolved_workspace_dir)
+            suffix = path.suffix.lower()
+            expected = FORMATS.get(suffix)
+            # No playlists/network protocols. Image pipe formats inspect only this file,
+            # not sequences inferred from its name.
+            allowlist = expected or ",".join(sorted(set(FORMATS.values())))
+            result = run_command("ffprobe", ["-v", "error", "-protocol_whitelist", "file",
+                                 "-format_whitelist", allowlist, "-show_entries",
+                                 "format=duration:stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate:stream_disposition=attached_pic",
+                                 "-of", "json", str(path)], timeout=settings.command_timeout_seconds,
+                                 allowed_binaries=_BINARIES, cwd=settings.resolved_workspace_dir)
             if not result.ok:
-                raise InvalidOperation(f"ffprobe falló: {result.error or result.stderr}")
+                reason = (result.error or result.stderr).strip().splitlines()[-1:]
+                raise InvalidOperation(f"ffprobe falló: {' '.join(reason)[:300] or 'medio inválido'}.",
+                                       code="MEDIA_PROBE_FAILED")
             payload = json.loads(result.stdout)
-            media.append({"path": str(path), "duration_seconds": float(payload.get("format", {}).get("duration", 0)), "streams": payload.get("streams", [])})
+            streams = payload.get("streams", [])
+            video = [s for s in streams if s.get("codec_type") == "video" and not s.get("disposition", {}).get("attached_pic")]
+            audio = [s for s in streams if s.get("codec_type") == "audio"]
+            try:
+                duration = float(payload.get("format", {}).get("duration", 0))
+            except ValueError:
+                duration = 0
+            image = suffix in IMAGE_EXTENSIONS
+            if (result.stderr.strip() or not (video or audio) or
+                (image and not any(s.get("width") and s.get("height") for s in video)) or
+                (not image and (not math.isfinite(duration) or duration <= 0))):
+                raise InvalidOperation("ffprobe no encontró un medio válido con imagen o duración utilizable.",
+                                       code="MEDIA_PROBE_FAILED")
+            kind = "image" if image else "video" if video else "audio"
+            media.append({"path": str(path), "kind": kind, "duration_seconds": 0 if image else duration, "streams": streams})
         self._mark_verified(["media.inspect"])
         return media
 

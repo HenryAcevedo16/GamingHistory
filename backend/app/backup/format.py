@@ -9,6 +9,7 @@ from typing import Annotated, BinaryIO, Literal
 from pydantic import Field, model_validator
 
 from app.core.errors import StudioError
+from app.editing.notes import BackupNote
 from app.editing.timeline import StrictModel
 
 MANIFEST = "manifest.json"
@@ -33,15 +34,20 @@ class BackupFile(StrictModel):
 
 
 class Manifest(StrictModel):
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     id: str
     created_at: datetime
     project_id: str = Field(min_length=1)
     project_name: str = Field(min_length=1)
     files: list[BackupFile] = Field(min_length=2, max_length=1002)
+    asset_notes: dict[Annotated[str, Field(min_length=1)], BackupNote] | None = Field(default=None, repr=False)
 
     @model_validator(mode="after")
     def valid_files(self) -> Manifest:
+        if (self.schema_version == 2 and self.asset_notes is None) or (
+            self.schema_version == 1 and "asset_notes" in self.model_fields_set
+        ):
+            raise ValueError("Las notas requieren el esquema de respaldo v2.")
         names = {item.name for item in self.files}
         assets = [item.asset_id for item in self.files if item.asset_id is not None]
         if (not BACKUP_ID.fullmatch(self.id) or self.created_at.utcoffset() is None

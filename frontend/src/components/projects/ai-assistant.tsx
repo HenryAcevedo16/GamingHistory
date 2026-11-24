@@ -17,7 +17,8 @@ function subscribeProvider(change: () => void) {
   return () => window.removeEventListener("storage", change);
 }
 
-export function AIAssistant({ plan, editorBusy, applyPlan, applySubtitles }: {
+export function AIAssistant({ projectId, plan, editorBusy, applyPlan, applySubtitles }: {
+  projectId: string;
   plan: string;
   editorBusy: boolean;
   applyPlan: (text: string) => Promise<boolean>;
@@ -59,10 +60,10 @@ export function AIAssistant({ plan, editorBusy, applyPlan, applySubtitles }: {
     try {
       const selection = { provider, model: provider === "opencode" ? model : undefined };
       if (kind === "script") {
-        const result = await ai.script(script, selection);
+        const result = await ai.script(script, selection, projectId);
         setSuggestion({ kind, text: result.text });
       } else {
-        const result = await ai.subtitles(srt, mode, selection);
+        const result = await ai.subtitles(srt, mode, selection, projectId);
         setSuggestion({ kind, text: result.srt, cues: result.cues });
       }
     } catch (failure) {
@@ -118,10 +119,12 @@ export function AIAssistant({ plan, editorBusy, applyPlan, applySubtitles }: {
         <label htmlFor="ai-script" className="block text-sm">Texto de guion</label>
         <textarea id="ai-script" className={`${field} w-full`} rows={5} value={script} maxLength={12000} disabled={Boolean(pending)}
           onChange={(event) => { setScript(event.target.value); if (suggestion?.kind === "script") setSuggestion(null); }} />
-        <Button type="button" variant="outline" disabled={!canSend || Boolean(pending) || !script.trim()} onClick={() => void generate("script")}>Enviar guion y sugerir estructura</Button>
+        <p id="ai-plan-notes" className="text-xs text-muted-foreground">Al pedir un plan de guion y cortes, el proveedor recibe el nombre de archivo, tipo, duración y nota guardada de cada recurso. No se envían rutas ni archivos.</p>
+        <Button type="button" variant="outline" aria-describedby="ai-plan-notes" disabled={editorBusy || !canSend || Boolean(pending) || !script.trim()} onClick={() => void generate("script")}>Enviar guion y sugerir estructura</Button>
       </div>
       <div className="min-w-0 space-y-2">
         <label htmlFor="ai-srt" className="block text-sm">Subtítulos o transcripción temporizada (SRT)</label>
+        <p id="ai-srt-resources" className="text-xs text-muted-foreground">Subtítulos: se envían nombre de archivo, tipo y duración de los recursos, sin notas.</p>
         <textarea id="ai-srt" className={`${field} w-full font-mono`} rows={5} value={srt} maxLength={12000} disabled={Boolean(pending)}
           onChange={(event) => { setSrt(event.target.value); if (suggestion?.kind === "subtitles") setSuggestion(null); }} />
         <div className="flex flex-wrap items-center gap-2">
@@ -130,7 +133,7 @@ export function AIAssistant({ plan, editorBusy, applyPlan, applySubtitles }: {
             <option value="correct">Corregir SRT</option>
             <option value="generate">Generar desde SRT</option>
           </select>
-          <Button type="button" variant="outline" disabled={!canSend || Boolean(pending) || !srt.trim()} onClick={() => void generate("subtitles")}>Enviar SRT y sugerir subtítulos</Button>
+          <Button type="button" variant="outline" aria-describedby="ai-srt-resources" disabled={editorBusy || !canSend || Boolean(pending) || !srt.trim()} onClick={() => void generate("subtitles")}>Enviar SRT y sugerir subtítulos</Button>
         </div>
       </div>
     </div>

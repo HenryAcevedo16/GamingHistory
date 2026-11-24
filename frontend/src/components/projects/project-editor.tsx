@@ -5,12 +5,13 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { projects } from "@/lib/api";
-import { emptyTrack, end, historyStep, initialHistory, items, labels, seconds, transform, withItems,
-  type Asset, type Item, type Kind, type Project, type Timeline, type Track } from "@/lib/timeline";
+import { appendMedia, chronological, emptyTrack, end, historyStep, initialHistory, items, labels, mediaLane, reorderClip, seconds, transform, withItems,
+  type Asset, type Item, type Kind, type MediaLane, type Placement, type Project, type Timeline, type Track } from "@/lib/timeline";
 import { ExportPanel, ProjectJobs } from "./project-output";
 import { AIAssistant } from "./ai-assistant";
 import { field, message, panel, Problem, StudioPage } from "./studio-ui";
 import { TimelineBoard } from "./timeline-board";
+import { MediaQueue } from "./media-queue";
 
 const timelineOf = ({ tracks, transitions }: Timeline) => ({ tracks, transitions });
 
@@ -39,16 +40,20 @@ function Editor({ initial }: { initial: Project }) {
   const [jobsVersion, setJobsVersion] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [path, setPath] = useState("");
+  const [pathNote, setPathNote] = useState("");
   const [targets, setTargets] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const [editError, setEditError] = useState("");
   const [saveError, setSaveError] = useState(false);
   const [importError, setImportError] = useState("");
+  const [orderingStatus, setOrderingStatus] = useState("");
   const timeline = history.current;
   const dirty = JSON.stringify(timeline) !== saved;
   const track = timeline.tracks.find((candidate) => items(candidate).some((item) => item.id === selected));
   const clip = track && items(track).find((item) => item.id === selected);
+  const order = track && track.kind !== "subtitle" ? chronological(track) : [];
+  const clipIndex = order.findIndex((item) => item.id === selected);
   const title = (item: Item) => item.text ?? item.name ?? assets.find((asset) => asset.id === item.asset_id)?.name ?? item.id;
 
   useEffect(() => {
@@ -105,10 +110,27 @@ function Editor({ initial }: { initial: Project }) {
     const target = timeline.tracks.find((entry) => entry.id === (asset ? targets[asset.id] : targets.subtitle) && entry.kind === kind && !entry.locked) ??
       timeline.tracks.find((entry) => entry.kind === kind && !entry.locked);
     const item: Item = { id: crypto.randomUUID(), start_seconds: seconds(target ? Math.max(0, ...items(target).map(end)) : 0),
-      duration_seconds: asset ? asset.duration_seconds : 1,
+      duration_seconds: asset && asset.kind !== "image" ? asset.duration_seconds : 1,
       ...(asset ? { asset_id: asset.id, source_in_seconds: 0 } : { text: "Nuevo subtítulo" }) };
     edit({ ...timeline, tracks: target ? timeline.tracks.map((entry) => entry.id === target.id ? withItems(entry, [...items(entry), item]) : entry) :
       [...timeline.tracks, withItems(emptyTrack(kind, crypto.randomUUID()), [item])] }, item.id);
+  }
+  async function place(entries: Placement[], targets: Partial<Record<MediaLane, string>>) {
+    try {
+      const next = appendMedia(timeline, entries, targets, () => crypto.randomUUID());
+      return await edit(next.timeline, next.first);
+    } catch (error) {
+      setEditError(message(error));
+      return false;
+    }
+  }
+  async function moveClip(direction: -1 | 1) {
+    if (!track || !clip) return;
+    const next = reorderClip(track, clip.id, direction);
+    if (next === track) return;
+    if (await edit({ ...timeline, tracks: timeline.tracks.map((entry) => entry.id === track.id ? next : entry) }, clip.id)) {
+      setOrderingStatus(`${title(clip)}: posición ${clipIndex + direction + 1} de ${order.length}, en ${track.name}.`);
+    }
   }
   function trackPicker(key: string, kind: Kind, title: string) {
     const options = timeline.tracks.filter((entry) => entry.kind === kind && !entry.locked);
@@ -137,38 +159,66 @@ function Editor({ initial }: { initial: Project }) {
     <div className="grid items-start gap-4 xl:grid-cols-[minmax(215px,270px)_minmax(0,1fr)]">
       <section className={panel} aria-labelledby="assets-heading">
         <h2 id="assets-heading" className="font-display text-lg font-semibold">Recursos</h2>
+        <MediaQueue projectId={id} tracks={timeline.tracks} busy={busy} run={task}
+          imported={(asset) => { setAssets((previous) => [...previous, asset]); setVersion((value) => value + 1); }}
+          sync={(next) => { setAssets(next); setVersion((value) => value + 1); }} place={place} />
+        <details className="space-y-2">
+        <summary className="cursor-pointer text-sm text-muted-foreground">Importar por ruta local</summary>
         <form className="space-y-2" onSubmit={(event) => {
           event.preventDefault();
           void task(async () => {
             setImportError("");
-            const { asset } = await projects.import(id, path.trim());
+            const { asset } = await projects.import(id, path.trim(), pathNote);
             setAssets((previous) => [...previous, asset]);
-            setPath(""); setVersion((value) => value + 1);
+            setPath(""); setPathNote(""); setVersion((value) => value + 1);
           }, (error) => setImportError(message(error)));
         }}>
           <label htmlFor="media-path" className="block text-sm">Ruta local</label>
           <input id="media-path" className={`${field} w-full`} value={path} onChange={(event) => setPath(event.target.value)} required aria-describedby="workspace-hint" />
           <p id="workspace-hint" className="text-xs text-muted-foreground">Solo archivos dentro de GHS_WORKSPACE_DIR.</p>
+          <label className="grid gap-1 text-xs">Nota opcional del recurso
+            <textarea rows={2} maxLength={500} className={field} value={pathNote} onChange={(event) => setPathNote(event.target.value)} />
+          </label>
           <Button variant="outline" type="submit" disabled={busy || !path.trim()}>Importar recurso</Button>
         </form>
         {importError && <Problem>{importError}</Problem>}
-        {!assets.length ? <p className="text-sm text-muted-foreground">Aún no hay recursos importados.</p> : <ul className="space-y-2">{assets.map((asset) => <li key={asset.id} className="space-y-2 rounded-lg border border-white/10 bg-background/50 p-2.5">
-          <p className="break-words text-sm font-medium">{asset.name}</p><p className="font-mono text-xs text-muted-foreground">{labels[asset.kind as Kind] ?? asset.kind} · {asset.duration_seconds} s</p>
-          {(asset.kind === "video" || asset.kind === "audio") && <div className="flex flex-wrap gap-2">
-            {trackPicker(asset.id, asset.kind, asset.name)}
-            <Button size="sm" variant="secondary" aria-label={`Añadir ${asset.name} a ${labels[asset.kind]}`} disabled={busy} onClick={() => add(asset.kind as Kind, asset)}>+ Añadir a {labels[asset.kind]}</Button>
+        </details>
+        {!assets.length ? <p className="text-sm text-muted-foreground">Aún no hay recursos importados.</p> : <ul className="space-y-2">{assets.map((asset) => {
+          const lane = mediaLane(asset);
+          return <li key={asset.id} className="space-y-2 rounded-lg border border-white/10 bg-background/50 p-2.5">
+          <p className="break-words text-sm font-medium">{asset.name}</p><p className="font-mono text-xs text-muted-foreground">{asset.kind === "image" ? "Imagen fija" : `${labels[asset.kind as Kind] ?? asset.kind} · ${asset.duration_seconds} s`}</p>
+          {lane && <div className="flex flex-wrap gap-2">
+            {trackPicker(asset.id, lane, asset.name)}
+            <Button size="sm" variant="secondary" aria-label={`Añadir ${asset.name} a ${labels[lane]}`} disabled={busy} onClick={() => add(lane, asset)}>+ Añadir a {labels[lane]}</Button>
           </div>}
-        </li>)}</ul>}
+          <AssetNote asset={asset} disabled={busy} save={async (note, onError) => {
+            let result: Asset | undefined;
+            await task(async () => {
+              result = await projects.saveNote(id, asset.id, note);
+              setAssets((previous) => previous.map((entry) => entry.id === asset.id ? result! : entry));
+              setVersion((value) => value + 1);
+            }, onError);
+            return result;
+          }} />
+        </li>; })}</ul>}
       </section>
       <section className={panel} aria-labelledby="timeline-heading">
         <TimelineBoard timeline={timeline} title={title} selected={selected} select={setSelected} change={replace} busy={busy} />
         {editError && <Problem>{editError}</Problem>}
         <div className="flex flex-wrap gap-2">{trackPicker("subtitle", "subtitle", "subtítulos")}<Button size="sm" variant="outline" disabled={busy} onClick={() => add("subtitle")}>Añadir subtítulo</Button></div>
+        {clipIndex >= 0 && <div className="flex flex-wrap items-center gap-2" role="group" aria-label={`Orden de ${title(clip!)}`}>
+          <Button size="sm" variant="outline" className="aria-disabled:opacity-50" aria-disabled={busy || track?.locked || clipIndex === 0}
+            onClick={() => { if (!busy) void moveClip(-1); }}>Mover antes</Button>
+          <Button size="sm" variant="outline" className="aria-disabled:opacity-50" aria-disabled={busy || track?.locked || clipIndex === order.length - 1}
+            onClick={() => { if (!busy) void moveClip(1); }}>Mover después</Button>
+          <p className="text-xs text-muted-foreground">{track?.locked ? "Pista bloqueada." : "Reordena la pista y quita sus huecos desde 0 s."}</p>
+        </div>}
+        <p className="sr-only" role="status">{orderingStatus}</p>
         {clip && track ? <Inspector key={JSON.stringify(clip)} clip={clip} name={title(clip)} disabled={busy || Boolean(track.locked)} apply={(next) => replace(track, next)} remove={() => remove()} /> :
           <p className="text-sm text-muted-foreground">Selecciona un clip para editar sus tiempos.</p>}
       </section>
     </div>
-    <AIAssistant plan={scriptPlan} editorBusy={busy} applyPlan={(text) => task(async () => {
+    <AIAssistant projectId={id} plan={scriptPlan} editorBusy={busy} applyPlan={(text) => task(async () => {
       setEditError("");
       const result = await projects.saveScriptPlan(id, text);
       setScriptPlan(result.text);
@@ -179,6 +229,32 @@ function Editor({ initial }: { initial: Project }) {
     <ExportPanel id={id} dirty={dirty} version={version} onRender={() => setJobsVersion((value) => value + 1)} />
     <ProjectJobs id={id} version={jobsVersion} />
   </div>;
+}
+
+function AssetNote({ asset, disabled, save }: { asset: Asset; disabled: boolean;
+  save: (note: string, onError: (error: unknown) => void) => Promise<Asset | undefined> }) {
+  const [note, setNote] = useState(asset.note ?? "");
+  const [status, setStatus] = useState("");
+  return <details>
+    <summary className="cursor-pointer text-xs text-muted-foreground">{asset.note ? "Editar nota para IA" : "Añadir nota para IA"}</summary>
+    <form className="mt-2 space-y-2" onSubmit={async (event) => {
+      event.preventDefault();
+      setStatus("");
+      const result = await save(note, (error) => setStatus(message(error)));
+      if (result) {
+        setNote(result.note ?? "");
+        setStatus("Nota guardada.");
+      }
+    }}>
+      <label className="grid gap-1 text-xs">Nota de {asset.name}
+        <textarea rows={2} maxLength={500} className={field} value={note} disabled={disabled}
+          onChange={(event) => { setNote(event.target.value); setStatus(""); }} />
+      </label>
+      <p className="text-xs text-muted-foreground">Solo se envía al proveedor de IA al pedir un plan.</p>
+      <Button size="sm" type="submit" variant="outline" disabled={disabled || note === (asset.note ?? "")}>Guardar nota</Button>
+      <p className="text-xs" role="status">{status}</p>
+    </form>
+  </details>;
 }
 
 function Inspector({ clip, name, disabled, apply, remove }: { clip: Item; name: string; disabled: boolean; apply: (next: Item) => void; remove: () => void }) {

@@ -76,6 +76,38 @@ export type Draft = { id: string; path: string };
 const json = (method: "POST" | "PUT", body: unknown) => ({ method, body: JSON.stringify(body) });
 const path = (id: string) => `/projects/${encodeURIComponent(id)}`;
 
+type UploadResult = { ok: true; asset: Asset } | { ok: false; error?: { code: string; message: string } };
+
+export function uploadMedia(id: string, file: File, note: string, signal: AbortSignal, progress: (percent: number) => void): Promise<Asset> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(new Error("Subida cancelada.")); return; }
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE_URL}/api${path(id)}/assets/upload`);
+    xhr.setRequestHeader("X-GHS-Upload", "1");
+    xhr.responseType = "json";
+    const abort = () => xhr.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    xhr.onloadend = () => signal.removeEventListener("abort", abort);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) progress(Math.floor(event.loaded * 100 / event.total));
+    };
+    xhr.upload.onload = () => progress(100);
+    xhr.onabort = () => reject(new Error("Subida cancelada."));
+    xhr.onerror = () => reject(new Error("No se pudo contactar con el backend."));
+    xhr.onload = () => {
+      const body = xhr.response as UploadResult[] | { error?: { message: string } } | null;
+      const result = Array.isArray(body) ? body[0] : null;
+      if (xhr.status >= 200 && xhr.status < 300 && result?.ok && result.asset) resolve(result.asset);
+      else reject(new Error((Array.isArray(body) ? result && !result.ok ? result.error?.message : undefined : body?.error?.message)
+        ?? `No se pudo importar el archivo (HTTP ${xhr.status}).`));
+    };
+    const data = new FormData();
+    data.append("files", file);
+    if (note.trim()) data.append("note", note);
+    xhr.send(data);
+  });
+}
+
 export const aiProviders = { claude: "Claude Code", opencode: "OpenCode" } as const;
 export type AIProvider = keyof typeof aiProviders;
 export type AIStatus = { ready: true; cli_version?: string; tools_disabled: boolean } |
@@ -89,11 +121,11 @@ export const ai = {
   status: async (provider: AIProvider) => (await request<{ providers: Record<AIProvider, AIStatus> }>(
     `/ai/status?provider=${provider}`, { headers: aiAction })).providers[provider],
   models: () => request<AIModelList>("/ai/models", { headers: aiAction }),
-  script: (text: string, selection: AISelection) => request<{ text: string }>("/ai/script", {
-    ...json("POST", { text, ...selection, confirmed: true }), headers: aiAction,
+  script: (text: string, selection: AISelection, projectId: string) => request<{ text: string }>("/ai/script", {
+    ...json("POST", { text, ...selection, project_id: projectId, confirmed: true }), headers: aiAction,
   }),
-  subtitles: (text: string, mode: SubtitleMode, selection: AISelection) => request<{ srt: string; cues: AICue[] }>("/ai/subtitles", {
-    ...json("POST", { text, mode, ...selection, confirmed: true }), headers: aiAction,
+  subtitles: (text: string, mode: SubtitleMode, selection: AISelection, projectId: string) => request<{ srt: string; cues: AICue[] }>("/ai/subtitles", {
+    ...json("POST", { text, mode, ...selection, project_id: projectId, confirmed: true }), headers: aiAction,
   }),
 };
 
@@ -123,7 +155,9 @@ export const projects = {
   create: (name: string) => request<Project>("/projects", json("POST", { name })),
   get: (id: string) => request<Project>(path(id)),
   saveScriptPlan: (id: string, text: string) => request<{ text: string }>(`${path(id)}/script-plan`, json("PUT", { text })),
-  import: (id: string, file: string) => request<{ asset: Asset }>(`${path(id)}/media`, json("POST", { path: file })),
+  import: (id: string, file: string, note: string) => request<{ asset: Asset }>(`${path(id)}/media`, json("POST", { path: file, note })),
+  saveNote: (id: string, assetId: string, note: string) =>
+    request<Asset>(`${path(id)}/assets/${encodeURIComponent(assetId)}/note`, json("PUT", { note })),
   validate: (id: string, timeline: Timeline) => request<Timeline>(`${path(id)}/timeline/validate`, json("POST", timeline)),
   save: (id: string, timeline: Timeline) => request<Project>(`${path(id)}/timeline`, json("PUT", timeline)),
   preflight: (id: string, target: Target) => request<Preflight>(`${path(id)}/exports/${target}/preflight`),

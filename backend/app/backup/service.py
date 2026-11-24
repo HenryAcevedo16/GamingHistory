@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -78,8 +79,9 @@ class BackupService:
         now = datetime.now(timezone.utc)
         if not now.microsecond:
             now = now.replace(microsecond=1)
-        manifest = Manifest(schema_version=1, id=f"{now:%Y%m%dT%H%M%S%fZ}-{new_id()}", created_at=now,
-                            project_id=project.id, project_name=project.name, files=files)
+        manifest = Manifest(schema_version=2, id=f"{now:%Y%m%dT%H%M%S%fZ}-{new_id()}", created_at=now,
+                            project_id=project.id, project_name=project.name, files=files,
+                            asset_notes={asset.id: asset.note for asset in project.assets if asset.note is not None})
         manifest_size = len(manifest.model_dump_json().encode("utf-8"))
         if manifest_size > JSON_LIMIT or total + manifest_size > settings.backup_max_bytes:
             raise BackupError("El respaldo supera el límite configurado.", code="BACKUP_SIZE_LIMIT")
@@ -154,22 +156,37 @@ class BackupService:
 
     def verify(self, backup_id: str) -> dict:
         manifest, size = self._manifest(backup_id)
+        self._read_project(manifest)
         for entry in manifest.files:
-            self._check(backup_id, entry)
+            if entry.name != TIMELINE:
+                self._check(backup_id, entry)
         return self.describe(manifest, "verified", size)
+
+    def _read_project(self, manifest: Manifest) -> Project:
+        entry = next(entry for entry in manifest.files if entry.name == TIMELINE)
+        with io.BytesIO() as data:
+            self._check(manifest.id, entry, data)
+            try:
+                raw = json.loads(data.getvalue())
+                original = Project.model_validate(raw)
+            except (ValueError, UnicodeError):
+                raise BackupError("timeline.json no cumple el modelo de proyecto.") from None
+        if (original.id, original.name) != (manifest.project_id, manifest.project_name):
+            raise BackupError("El proyecto no coincide con el manifiesto.")
+        for asset, raw_asset in zip(original.assets, raw.get("assets", []), strict=True):
+            if (manifest.schema_version == 1 and "note" in raw_asset) or raw_asset.get("note") != asset.note:
+                raise BackupError("timeline.json contiene una nota no saneada o de una versión incompatible.")
+        if manifest.schema_version == 2 and manifest.asset_notes != {
+            asset.id: asset.note for asset in original.assets if asset.note is not None
+        }:
+            raise BackupError("Las notas de timeline.json no coinciden con el manifiesto.")
+        return original
 
     def restore(self, backup_id: str) -> Project:
         manifest, _ = self._manifest(backup_id)
         files = {entry.name: entry for entry in manifest.files}
-        with io.BytesIO() as data:
-            self._check(backup_id, files[TIMELINE], data)
-            try:
-                original = Project.model_validate_json(data.getvalue())
-            except ValidationError:
-                raise BackupError("timeline.json no cumple el modelo de proyecto.") from None
+        original = self._read_project(manifest)
         self._check(backup_id, files[METADATA])
-        if (original.id, original.name) != (manifest.project_id, manifest.project_name):
-            raise BackupError("El proyecto no coincide con el manifiesto.")
         assets = {entry.asset_id: entry for entry in manifest.files if entry.asset_id is not None}
         if not assets.keys() <= {asset.id for asset in original.assets}:
             raise BackupError("El manifiesto incluye recursos que no existen en el timeline.")

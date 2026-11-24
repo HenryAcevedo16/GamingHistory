@@ -66,6 +66,7 @@ def main():
         expect(page.get_by_role("heading", name=name)).to_be_visible()
         route = f"{args.api}/api/projects/{page.url.rsplit('/', 1)[-1]}"
         print(f"proyecto -> {page.url}", flush=True)
+        page.get_by_text("Importar por ruta local", exact=True).click()
         path_field = page.get_by_label("Ruta local")
         path_field.fill("../AGENTS.md")
         with page.expect_response(lambda r: r.url == route + "/media") as bad_import:
