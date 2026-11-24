@@ -16,13 +16,15 @@ import os
 import re
 from math import isfinite
 from pathlib import Path
+from threading import Lock
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session
 
 from app.core.errors import CapabilityNotAvailable, InvalidOperation
-from app.editing.adapter import AdapterCapabilities, EditorAdapter, EditorOperation
+from app.editing.adapter import AdapterCapabilities, EditorAdapter, EditorOperation, execute_operation
 from app.editing.adapters.resolve_bridge import (
     ResolveBridgeClient,
     ResolveBridgeUnavailable,
@@ -44,12 +46,14 @@ _IMPLEMENTED = {
     EditorOperation.RENDER_PREVIEW,
     EditorOperation.RENDER_FINAL,
     EditorOperation.GET_JOB_STATUS,
+    EditorOperation.EXPORT_PROJECT,
 }
 
 _MEDIA_TYPES = {"video": 1, "audio": 2}
 _CAPABILITY_IDS = {"project.inspect", "project.create", "media.import", "timeline.create", "track.add", "clip.add", "render", "job.status"}
 _VERSION = re.compile(r"(\d{1,4})\.(\d{1,4})(?:\.\d{1,8}){0,3}", re.ASCII)
 _FREE_UNAVAILABLE = "Puente interno no disponible en Resolve Free 21.1 o posterior: requiere Studio."
+_SEND_LOCK = Lock()
 
 
 def _version_pair(version: Any) -> tuple[int, int] | None:
@@ -159,6 +163,10 @@ class ResolveConverter(TimelineConverter):
         tracks: list[dict[str, Any]] = []
         track_counts = {"video": 0, "audio": 0}
         for track_index, track in enumerate(project.tracks):
+            if not track.enabled:
+                unsupported.append(UnsupportedElement(path=f"tracks[{track_index}]", kind="track",
+                                                       reason="Pista desactivada; se omite.", element_id=track.id))
+                continue
             if isinstance(track, SubtitleTrack):
                 if track.cues:
                     unsupported.append(
@@ -269,6 +277,7 @@ class ResolveAdapter(EditorAdapter):
         super().__init__(plugin_id, config)
         self._bridge_instance = bridge
         self.last_health_error: str | None = None
+        self.last_health: dict[str, Any] | None = None
 
     @property
     def bridge(self) -> ResolveBridgeClient:
@@ -308,12 +317,14 @@ class ResolveAdapter(EditorAdapter):
     # -- lifecycle ---------------------------------------------------------
 
     def health_check(self) -> bool:
+        self.last_health = None
         try:
             health = self._health()
         except (ResolveBridgeUnavailable, ResolveBridgeCallError) as exc:
             self.last_health_error = exc.message
             return False
         self.last_health_error = None
+        self.last_health = health
         if health.get("current_project"):
             self._mark_verified(["project.inspect"])
         return True
@@ -452,6 +463,76 @@ class ResolveAdapter(EditorAdapter):
         return result
 
     # -- render ------------------------------------------------------------
+
+    def export_project(self, timeline_id: str, target: str, *, project: Project) -> dict[str, Any]:
+        if target != "resolve" or timeline_id != project.id:
+            raise CapabilityNotAvailable("resolve.export", plugin_id=self.plugin_id)
+        if not _SEND_LOCK.acquire(blocking=False):
+            raise InvalidOperation("Ya hay otro envío a Resolve en ejecución.", status_code=409)
+        try:
+            return self._send_project(project)
+        finally:
+            _SEND_LOCK.release()
+
+    def _send_project(self, project: Project) -> dict[str, Any]:
+        plan = ResolveConverter().convert(project)
+        if not plan.supported:
+            raise InvalidOperation("No hay clips exportables a Resolve.")
+
+        def run(operation: EditorOperation, **params: Any) -> Any:
+            return execute_operation(self, operation, params)
+
+        paths = self.export_sources(plan, self._health())
+        name = f"GHS {project.name[:65]} {uuid4().hex[:8]}"
+        created = run(EditorOperation.CREATE_PROJECT, name=name)
+        media = run(EditorOperation.IMPORT_MEDIA, paths=list(dict.fromkeys(paths.values())))
+        by_path = {_norm(item["file_path"]): item for item in media if item["file_path"]}
+        timeline = run(EditorOperation.CREATE_TIMELINE, project_id=created["id"], name="Gaming History Studio")
+        handle = timeline["handle"]
+        if not timeline["current"]:
+            raise InvalidOperation("Resolve no seleccionó la timeline creada.")
+        try:
+            fps = float(self.bridge.call(handle, "GetSetting", "timelineFrameRate"))
+        except (TypeError, ValueError):
+            raise InvalidOperation("Resolve no confirmó los FPS de la timeline.") from None
+        if not isfinite(fps) or fps <= 0:
+            raise InvalidOperation("Resolve no confirmó los FPS de la timeline.")
+        if plan.payload["fps"] is not None and abs(plan.payload["fps"] - fps) > 0.001:
+            raise InvalidOperation(f"La timeline nueva de Resolve usa {fps:g} fps; configura el preset para igualar el proyecto.")
+        start = self.bridge.call(handle, "GetStartFrame")
+        if type(start) is not int or start < 0:
+            raise InvalidOperation("Resolve no confirmó el fotograma inicial.")
+        converter = ResolveConverter()
+        plan = converter.convert(project.model_copy(update={"metadata": {**project.metadata, "fps": fps}}))
+        count = 0
+        for track in plan.payload["tracks"]:
+            if not track["clips"]:
+                continue
+            current = self.bridge.call(handle, "GetTrackCount", track["kind"])
+            if type(current) is not int or current < 0:
+                raise InvalidOperation("Resolve no confirmó el número de pistas.")
+            for _ in range(current, track["index"]):
+                run(EditorOperation.ADD_TRACK, timeline_id=handle, track={"kind": track["kind"]})
+            for clip in sorted(track["clips"], key=lambda item: item["start_seconds"]):
+                item = by_path[_norm(paths[clip["asset_id"]])]
+                try:
+                    source_fps = float(item["fps"])
+                except (ValueError, TypeError):
+                    source_fps = fps if track["kind"] == "audio" else 0
+                placement = converter.clip_placement(track, clip, source_fps=source_fps, timeline_start=start)
+                run(EditorOperation.ADD_CLIP, timeline_id=handle, clip={"media_handle": item["handle"], **placement})
+                count += 1
+        if self.bridge.named("save_project").get("saved") is not True:
+            raise InvalidOperation("Resolve no confirmó que guardó el proyecto.")
+        return {"name": created["name"], "timeline": timeline["name"], "clips": count}
+
+    def export_sources(self, plan: ConversionResult, health: dict[str, Any]) -> dict[str, str]:
+        from app.editing.adapters.ffmpeg import workspace_path
+
+        roots = _real_roots((health.get("policy") or {}).get("media_roots"))
+        used = {clip["asset_id"] for track in plan.payload["tracks"] for clip in track["clips"]}
+        return {item["id"]: self._validated_path(str(workspace_path(item["path"])), roots, "medio", must_exist=True)
+                for item in plan.payload["assets"] if item["id"] in used}
 
     def render_preview(self, timeline_id: str, **options: Any) -> dict[str, Any]:
         return self._render(timeline_id, options)

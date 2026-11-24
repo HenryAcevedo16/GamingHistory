@@ -24,7 +24,7 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { label: "Extensiones", icon: Puzzle, href: "/extensions" },
   { label: "Dashboard", icon: LayoutDashboard, phase: "Fase 2" },
-  { label: "Proyectos", icon: FolderKanban, phase: "Fase 2" },
+  { label: "Proyectos", icon: FolderKanban, href: "/projects" },
   { label: "Trabajos", icon: ListChecks, phase: "Fase 4" },
   { label: "Auditoría", icon: History, phase: "Fase 8" },
 ];
@@ -76,7 +76,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               <NavRow
                 key={item.label}
                 item={item}
-                active={false}
+                active={Boolean(item.href && (pathname === item.href || pathname.startsWith(`${item.href}/`)))}
                 onNavigate={onNavigate}
               />
             ))}

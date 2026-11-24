@@ -34,6 +34,7 @@ def _project(path: str) -> Project:
 
 def test_converter_builds_trim_concat_and_reports_transitions(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(settings, "workspace_dir", tmp_path)
+    (tmp_path / "clip.mp4").touch()
     result = FFmpegConverter().convert(_project("clip.mp4"))
 
     assert result.supported is True
@@ -43,6 +44,8 @@ def test_converter_builds_trim_concat_and_reports_transitions(tmp_path, monkeypa
 
 def test_converter_reports_unsupported_elements(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(settings, "workspace_dir", tmp_path)
+    (tmp_path / "a.mp4").touch()
+    (tmp_path / "b.mp4").touch()
     project = Project(
         name="unsupported",
         assets=[

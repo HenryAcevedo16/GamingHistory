@@ -85,18 +85,21 @@ class FFmpegConverter:
     def convert(self, project: Project) -> ConversionResult:
         unsupported: list[UnsupportedElement] = []
         assets = {asset.id: asset for asset in project.assets}
-        video_tracks = [track for track in project.tracks if isinstance(track, VideoTrack)]
+        video_tracks = [track for track in project.tracks if isinstance(track, VideoTrack) and track.enabled and track.clips]
         video_clips = sorted(
-            [clip for track in video_tracks for clip in track.clips],
+            [clip for track in video_tracks[:1] for clip in track.clips],
             key=lambda clip: clip.start_seconds,
         )
         audio_clips = sorted(
-            [clip for track in project.tracks if isinstance(track, AudioTrack) for clip in track.clips],
+            [clip for track in project.tracks if isinstance(track, AudioTrack) and track.enabled for clip in track.clips],
             key=lambda clip: clip.start_seconds,
         )
         for index, transition in enumerate(project.transitions):
             unsupported.append(UnsupportedElement(path=f"transitions[{index}]", kind="transition", reason="Las transiciones no se exportan en Fase 3.", element_id=transition.id))
         for track_index, track in enumerate(project.tracks):
+            if not track.enabled and (getattr(track, "clips", []) or getattr(track, "cues", [])):
+                unsupported.append(UnsupportedElement(path=f"tracks[{track_index}]", kind="track", reason="Pista desactivada; se omite.", element_id=track.id))
+                continue
             if isinstance(track, SubtitleTrack) and track.cues:
                 unsupported.append(UnsupportedElement(path=f"tracks[{track_index}]", kind="subtitles", reason="Los subtítulos no se exportan en Fase 3.", element_id=track.id))
         for track in video_tracks[1:]:
@@ -119,6 +122,9 @@ class FFmpegConverter:
                 continue
             source = workspace_path(asset.path)
             streams = self._streams(asset)
+            if not source.is_file():
+                unsupported.append(UnsupportedElement(path=f"assets.{asset.id}", kind="asset", reason="El archivo local no existe.", element_id=asset.id))
+                continue
             if streams and not any(stream.get("codec_type") == "video" for stream in streams):
                 unsupported.append(UnsupportedElement(path=f"clips.{clip.id}", kind="clip", reason="El recurso no tiene pista de vídeo.", element_id=clip.id))
                 continue
@@ -154,6 +160,9 @@ class FFmpegConverter:
                 unsupported.append(UnsupportedElement(path=f"assets.{asset.id}", kind="asset", reason="El recurso no tiene ruta local.", element_id=asset.id))
                 continue
             source = workspace_path(asset.path)
+            if not source.is_file() or (self._streams(asset) and not self._has_audio(asset)):
+                unsupported.append(UnsupportedElement(path=f"audio.{clip.id}", kind="clip", reason="El recurso local no existe o no contiene audio.", element_id=clip.id))
+                continue
             if clip.effects:
                 unsupported.append(UnsupportedElement(path=f"audio.{clip.id}.effects", kind="effects", reason="Los efectos de audio no se exportan en Fase 3.", element_id=clip.id))
             if clip.fade_in_seconds or clip.fade_out_seconds:

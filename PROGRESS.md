@@ -1,7 +1,7 @@
 # PROGRESS — Gaming History Studio
 
 Bitácora operativa del repositorio. Describe lo que existe y lo que se verificó,
-no lo que se planea. Última actualización: **2026-11-23** (Fase 4 verificada en disco y en CapCut).
+no lo que se planea. Última actualización: **2026-11-23** (Fase 7 verificada en navegador).
 
 ## 1. Estado actual
 
@@ -13,16 +13,14 @@ no lo que se planea. Última actualización: **2026-11-23** (Fase 4 verificada e
 | 4 | Integración VectCutAPI/CapCut verificada | **Completada y verificada** (disco y confirmación visual en CapCut) |
 | 5 | Integración DaVinci Resolve verificada | **Completada y verificada** (Free 21.0.4.5, puente in-app) |
 | 6 | Integración Descript opcional | Pendiente (sin código) |
-| 7 | Editor visual integrado con la timeline | Pendiente (sin código) |
+| 7 | Editor visual integrado con la timeline | **Completada y verificada** (Edge, FFmpeg, CapCut local y API viva de Resolve) |
 | 8 | Sincronización con Google Drive | Pendiente (sin código) |
 
 Notas de alcance:
 
-- Solo existe la pantalla **Extensiones** (`/extensions`); `/` redirige con 307 a
-  `/extensions`.
-- En la barra lateral, Dashboard, Proyectos, Trabajos y Auditoría son elementos
-  deshabilitados con etiquetas "Fase 2", "Fase 2", "Fase 4" y "Fase 8". No son pantallas
-  implementadas.
+- **Extensiones** (`/extensions`) y **Proyectos** (`/projects`, `/projects/[id]`) están activos;
+  `/` redirige a `/extensions`. Dashboard, Trabajos globales y Auditoría no son pantallas
+  implementadas. La lista de trabajos del proyecto vive dentro del editor.
 - Existe el contrato `EditorAdapter`, el modelo unificado persistido de timeline y el
   `EditingRouter`; el adaptador FFmpeg ya es real, se autodescubre al arrancar y ejecuta
   importación, corte, unión, mezcla de audio, render y consulta de trabajos.
@@ -662,3 +660,57 @@ las fases anteriores.
     HTTP auditadas en `audit_log`. El original permanece en el workspace; la copia autorizada
     está en `C:\Users\emil-\AppData\Local\CapCut\User Data\Projects\com.lveditor.draft\dfd_cat_1795484464_505eff12`.
 - **Próximo paso:** repetir la prueba de apertura si se actualiza CapCut o VectCutAPI.
+
+## Fase 7 — Editor visual integrado (2026-11-23, hora local)
+
+- **Estado:** completada para el alcance mínimo y verificada con navegador real.
+- **Commit de cierre:** `fase 7: editor visual` (commit que incluye esta entrada).
+- **Implementado:**
+  - `/projects`: listado, creación y apertura de proyectos reales. `/projects/[id]`: recursos locales,
+    tres tipos de pista, regla y zoom, selección, movimiento y recortes con ratón o teclado,
+    edición de subtítulos, borrado, guardado explícito y 50 pasos de historial local.
+  - `POST /api/projects/{id}/timeline/validate` valida propuestas sin persistir; `PUT .../timeline`
+    mantiene la timeline unificada como fuente de verdad. Los cambios rechazados no entran en el historial.
+  - `GET /api/projects/{id}/exports/{target}/preflight` combina router, capacidades verificadas,
+    estado vivo cuando corresponde y salida `unsupported` del conversor. Se revisa antes de confirmar;
+    se comprueba la revisión guardada en el envío. FFmpeg y CapCut usan sus endpoints existentes;
+    `POST /api/projects/{id}/exports/resolve` crea y guarda un proyecto local mediante el adaptador.
+  - Trabajos del proyecto con polling, progreso, estados reales, log y descarga mediante
+    `GET /api/jobs/{id}/result` para resultados completos dentro del workspace.
+- **Probado realmente (comando → resultado):**
+  - En `backend`, con `GHS_RESOLVE_LIVE=1`, `GHS_VECTCUT_LIVE=1` y `VECTCUT_ROOT=E:\VectCutAPI`:
+    `python -m pytest -o addopts= -q -rs` → **64 pasaron**, incluida la prueba de Resolve Free 21.0.4.5
+    en una base de pruebas: preflight disponible, POST de envío 201 y lectura real de V2 con un clip de
+    24 fotogramas. `python -m compileall -q app` → OK.
+  - En `frontend`: `npm run lint`, `npx tsc --noEmit` y `npm run build` con
+    `NEXT_PUBLIC_API_URL=http://127.0.0.1:8017` → OK; `npm test` → **3 pasaron** (runner de Node).
+  - Desde la raíz, con Edge instalado y Playwright para Python:
+    `python scripts/verify_phase7.py --web http://127.0.0.1:3017 --api http://127.0.0.1:8017 --workspace E:\GamingHistory\backend\data\workspace --evidence "$env:TEMP\opencode\ghs-phase7-evidence-final" --send-capcut`
+    → Edge 158 headless: creó y reabrió `c100228451674b1a850aaf4660062f3c`, rechazó la ruta fuera del
+    workspace, importó dos MP4 de 2 s generados por FFmpeg y verificó recorte inicial por teclado,
+    recorte final y movimiento con ratón, deshacer/rehacer, texto de subtítulo y persistencia tras recarga.
+    El solapamiento devolvió HTTP 422; la UI mostró el motivo y conservó el clip en su sitio.
+  - El preflight mostró la omisión del subtítulo antes de confirmar el render. El trabajo terminó
+    en `done`, se descargó por la UI y `ffprobe -v error -show_entries format=duration:stream=codec_name -of json <render-ffmpeg.mp4>`
+    devolvió **3.000000 s · H.264 / AAC**. CapCut estaba disponible y devolvió HTTP 201 para el borrador
+    local `dfd_cat_1795486590_e70f9e41`. En la base de la sesión del navegador el plugin Resolve no
+    estaba instalado en Studio; el botón se mostró deshabilitado con ese motivo.
+  - Evidencia: `%TEMP%\opencode\ghs-phase7-evidence-final\`, capturas `01-timeline-persistida.png`,
+    `02-solapamiento-rechazado.png`, `03-preflight-ffmpeg.png`, `04-render-completado.png`,
+    `05-preflight-capcut.png`, `06-resultado-capcut.png`, `07-disponibilidad.png`, `08-timeline-movil.png`
+    y `09-listado-proyectos.png`. El MP4 descargado está en la misma carpeta.
+- **No probado / limitaciones:**
+  - En esta fase no se abrió en CapCut Desktop el nuevo borrador. Se verificó su generación en disco;
+    no se modificó el estado ni la confirmación histórica de Fase 4.
+  - La confirmación de Resolve con el plugin activo se verificó vía API y puente en vivo, no con el
+    clic en Edge. El flujo exige rutas compatibles tanto con `GHS_WORKSPACE_DIR` como con el puente.
+  - En Edge se verificó el trabajo completado y su descarga, no se indujo un render fallido ni se
+    hizo una auditoría formal de accesibilidad. El historial no sobrevive a la recarga.
+- **Notas de entorno y estado:**
+  - FFmpeg y VectCutAPI conectados; Resolve verificado en base de pruebas separada; sin envío a la nube.
+  - Next `127.0.0.1:3017`, Uvicorn `127.0.0.1:8017`, VectCutAPI `127.0.0.1:9000`. Logs:
+    `%TEMP%\opencode\ghs-phase7-next.log` y `%TEMP%\opencode\ghs-phase7-uvicorn.log`.
+  - SQLite `backend/data/studio.db` conserva los proyectos, trabajos, borradores y auditoría. Los
+    medios y resultados originales se guardaron en `backend/data/workspace`.
+- **Próximo paso:** repetir el envío a Resolve desde la UI cuando esté habilitado en la base habitual,
+  con medios en una ruta admitida por ambas aplicaciones.

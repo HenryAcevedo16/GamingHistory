@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 
 import { Sidebar } from "@/components/layout/sidebar";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -53,13 +53,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="app-grid" aria-hidden />
 
       <div className="fixed inset-y-0 left-0 z-40 hidden w-[264px] lg:block">
-        <Sidebar />
+          <Suspense fallback={null}><Sidebar /></Suspense>
       </div>
 
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetContent side="left" showCloseButton={false} className="mobile-nav-sheet">
           <SheetTitle className="sr-only">Navegación</SheetTitle>
-          <Sidebar onNavigate={() => setMobileOpen(false)} />
+          <Suspense fallback={null}><Sidebar onNavigate={() => setMobileOpen(false)} /></Suspense>
         </SheetContent>
       </Sheet>
 

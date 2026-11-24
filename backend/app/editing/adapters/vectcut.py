@@ -162,6 +162,11 @@ class VectCutConverter(TimelineConverter):
         return result
 
 
+def draft_sources(converted: ConversionResult) -> dict[tuple[str, str], Path]:
+    return {(item["kind"], item["path"]): _media_path(item["path"], item["kind"])
+            for item in (converted.payload or {}).get("items", []) if item["kind"] != "text"}
+
+
 @register_adapter("vectcut-capcut")
 class VectCutAdapter(EditorAdapter):
     def _audit(self, action: str, status: str, detail: str = "") -> None:
@@ -335,13 +340,13 @@ class VectCutAdapter(EditorAdapter):
         meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
     def export_project(self, timeline_id: str, target: str, *, width: int = 1920, height: int = 1080,
-                       draft_id: str | None = None) -> dict[str, Any]:
+                       draft_id: str | None = None, revision: str | None = None) -> dict[str, Any]:
         action = "vectcut.export_project"
         try:
             if target == "capcut-desktop" and draft_id is not None:
                 response = self._deploy(timeline_id, draft_id)
             elif target == "capcut" and draft_id is None:
-                response = self._generate(timeline_id, width, height)
+                response = self._generate(timeline_id, width, height, revision)
             else:
                 raise CapabilityNotAvailable("draft.export", plugin_id=self.plugin_id)
         except (InvalidOperation, CapabilityNotAvailable):
@@ -356,19 +361,21 @@ class VectCutAdapter(EditorAdapter):
         self._audit(action, "ok")
         return response
 
-    def _generate(self, project_id: str, width: int, height: int) -> dict[str, Any]:
+    def _generate(self, project_id: str, width: int, height: int, revision: str | None) -> dict[str, Any]:
+        from app.editing.revision import check_revision
+
         if any(type(n) is not int or not 16 <= n <= 7680 for n in (width, height)):
             raise InvalidOperation("Dimensiones del borrador fuera de rango.")
         self._require_local_profile()
         with Session(db.engine) as session:
             project = ProjectRepository(session).get(project_id)
+        check_revision(project, revision)
         converted = VectCutConverter().convert(project)
         items = (converted.payload or {}).get("items", [])
         if not converted.supported:
             raise InvalidOperation("El timeline no contiene elementos exportables.",
                                    details=[item.model_dump() for item in converted.unsupported])
-        sources = {(item["kind"], item["path"]): _media_path(item["path"], item["kind"])
-                   for item in items if item["kind"] != "text"}
+        sources = draft_sources(converted)
         # Reject out-of-workspace media before the first HTTP call.
         try:
             self._endpoint()

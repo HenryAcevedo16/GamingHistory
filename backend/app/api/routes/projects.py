@@ -4,10 +4,11 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlmodel import Session
 
 from app.core.db import get_session
+from app.core.errors import InvalidOperation
 from app.editing.adapter import EditorOperation, execute_operation
 from app.editing.converters import UnsupportedElement
 from app.editing.drafts import DraftResult, list_drafts
@@ -105,7 +106,21 @@ def replace_timeline(
     repository: ProjectRepository = Depends(_repository),
 ) -> Project:
     project = repository.get(project_id)
-    return repository.save(project.with_timeline(payload))
+    return repository.save(_validated_timeline(project, payload))
+
+
+def _validated_timeline(project: Project, payload: TimelinePayload) -> Project:
+    try:
+        return project.with_timeline(payload)
+    except ValidationError as exc:
+        raise InvalidOperation("; ".join(error["msg"] for error in exc.errors())) from None
+
+
+@router.post("/{project_id}/timeline/validate", response_model=TimelinePayload)
+def validate_timeline(
+    project_id: str, payload: TimelinePayload, repository: ProjectRepository = Depends(_repository),
+) -> TimelinePayload:
+    return _validated_timeline(repository.get(project_id), payload).timeline()
 
 
 class DraftRequest(BaseModel):
@@ -113,6 +128,7 @@ class DraftRequest(BaseModel):
 
     width: int = Field(default=1920, strict=True, ge=16, le=7680)
     height: int = Field(default=1080, strict=True, ge=16, le=7680)
+    revision: str | None = None
 
 
 class DraftExport(BaseModel):

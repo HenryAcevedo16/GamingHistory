@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session
 
@@ -15,6 +16,7 @@ from app.editing.adapter import EditorOperation, execute_operation
 from app.editing.jobs import JobRepository, RenderJob
 from app.editing.persistence import ProjectRepository
 from app.editing.registry import default_registry
+from app.editing.revision import check_revision
 from app.editing.timeline import Asset, Project
 from app.models.audit import AuditLog
 
@@ -34,6 +36,7 @@ class RenderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     output_path: str = Field(min_length=1)
     confirm_overwrite: bool = False
+    revision: str | None = None
 
 
 class JobResponse(BaseModel):
@@ -103,7 +106,8 @@ def start_render(
 ) -> JobResponse:
     if kind not in {"preview", "final"}:
         raise InvalidOperation("El tipo de render debe ser 'preview' o 'final'.")
-    ProjectRepository(session).get(project_id)
+    project = ProjectRepository(session).get(project_id)
+    check_revision(project, payload.revision)
     from app.editing.adapters.ffmpeg import workspace_path
 
     output = workspace_path(payload.output_path)
@@ -111,11 +115,11 @@ def start_render(
         raise InvalidOperation("La salida ya existe; envía confirm_overwrite=true para reemplazarla.")
     job = JobRepository(session).create(project_id=project_id, kind=kind, output_path=str(output))
     _audit(session, f"render_{kind}", "queued", f"Job {job.id} encolado para {output}")
-    background_tasks.add_task(_execute_render, job.id, payload.confirm_overwrite)
+    background_tasks.add_task(_execute_render, job.id, payload.confirm_overwrite, project)
     return _job_response(job)
 
 
-def _execute_render(job_id: str, overwrite: bool) -> None:
+def _execute_render(job_id: str, overwrite: bool, project: Project) -> None:
     with Session(engine) as session:
         jobs = JobRepository(session)
         job = jobs.get(job_id)
@@ -124,7 +128,6 @@ def _execute_render(job_id: str, overwrite: bool) -> None:
         jobs.update(job, status="running", progress=10, started_at=datetime.now(timezone.utc))
         _audit(session, f"render_{job.kind}", "running", f"Job {job.id} iniciado.")
         try:
-            project = ProjectRepository(session).get(job.project_id)
             adapter = default_registry.create("ffmpeg")
             operation = EditorOperation.RENDER_PREVIEW if job.kind == "preview" else EditorOperation.RENDER_FINAL
             result = execute_operation(adapter, operation, {"timeline_id": job.id, "project": project, "output_path": job.output_path, "overwrite": overwrite})
@@ -147,3 +150,17 @@ def get_job(job_id: str, jobs: JobRepository = Depends(_jobs)) -> JobResponse:
     if job is None:
         raise InvalidOperation(f"No existe el trabajo '{job_id}'.")
     return _job_response(job)
+
+
+@router.get("/jobs/{job_id}/result", response_class=FileResponse)
+def download_result(job_id: str, jobs: JobRepository = Depends(_jobs)) -> FileResponse:
+    from app.editing.adapters.ffmpeg import workspace_path
+
+    job = jobs.get(job_id)
+    if job is None or job.status != "done":
+        raise InvalidOperation("El trabajo no tiene un resultado disponible.", status_code=404)
+    output = workspace_path(job.output_path)
+    if not output.is_file():
+        raise InvalidOperation("El resultado ya no está en el workspace.", status_code=404)
+    return FileResponse(output, filename=output.name, media_type="application/octet-stream",
+                        headers={"X-Content-Type-Options": "nosniff"})

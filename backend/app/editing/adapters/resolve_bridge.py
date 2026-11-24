@@ -123,7 +123,8 @@ class ResolveBridgeClient:
     _ALLOWED_CALL_METHODS = frozenset({
         "AddRenderJob", "AddTrack", "AppendToTimeline", "CreateEmptyTimeline", "CreateProject",
         "GetClipList", "GetClipProperty", "GetMediaPool", "GetName", "GetRenderJobStatus",
-        "GetRootFolder", "GetSubFolderList", "ImportMedia", "SetCurrentTimeline",
+        "GetRootFolder", "GetSetting", "GetStartFrame", "GetSubFolderList", "GetTrackCount",
+        "ImportMedia", "SetCurrentTimeline",
         "SetRenderSettings", "StartRendering",
     })
 

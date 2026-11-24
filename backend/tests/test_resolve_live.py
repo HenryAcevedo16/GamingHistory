@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import create_engine
 
 from app.core import db
+from app.core.config import settings
 from app.editing.adapter import execute_operation
 from app.editing.adapters.resolve import ResolveConverter
 from app.editing.adapters.resolve_bridge import ResolveBridgeCallError, ResolveBridgeClient
@@ -46,6 +47,7 @@ def test_resolve_free_end_to_end(tmp_path, monkeypatch, caplog, capsys):
     suffix = uuid4().hex[:10]
     output = Path.home() / "Movies" / f"ghs-resolve-{suffix}"
     output.mkdir(parents=True)
+    monkeypatch.setattr(settings, "workspace_dir", output)
     source = output / "source.mov"
     subprocess.run([
         "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=24",
@@ -135,9 +137,24 @@ def test_resolve_free_end_to_end(tmp_path, monkeypatch, caplog, capsys):
             assert audit.json()["entries"]
             view = api.get(url)
             diagnosis = api.post(f"{url}/diagnose")
+            created = api.post("/api/projects", json={"name": unified.name}).json()
+            route = f"/api/projects/{created['id']}"
+            # The export uses the new Resolve project's real preset for placement.
+            unified.metadata = {}
+            assert api.put(route, json=unified.model_dump(mode="json")).status_code == 200
+            review = api.get(f"{route}/exports/resolve/preflight").json()
+            assert review["available"], review
+            sent = api.post(f"{route}/exports/resolve", json={"revision": review["revision"]})
+            assert sent.status_code == 201, sent.text
+            assert sent.json()["clips"] == 1
+            assert bridge.named("get_project")["name"] == sent.json()["name"]
+            exported_v2 = probe.call("current_timeline", "GetItemListInTrack", "video", 2)
+            assert len(exported_v2) == 1
+            assert probe.call(exported_v2[0]["__handle__"], "GetDuration") == 24
+            print("Phase 7 preflight -> available; POST exports/resolve -> 201; saved project V2 has one 24-frame clip")
             captured = capsys.readouterr()
             surfaces = [captured.out, captured.err, caplog.text, connected.text, caps.text, audit.text,
-                        view.text, diagnosis.text]
+                        view.text, diagnosis.text, json.dumps(review), sent.text]
             if any(bridge.config["token"] in surface for surface in surfaces):
                 pytest.fail("Se detectó la credencial en una superficie de salida.", pytrace=False)
             print(captured.out, end="")

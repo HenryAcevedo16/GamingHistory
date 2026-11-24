@@ -7,6 +7,7 @@ import type {
   RequirementReport,
   RouterDecisionsResponse,
 } from "@/lib/types";
+import type { Asset, Project, ProjectSummary, Timeline } from "@/lib/timeline";
 
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -53,10 +54,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const errorPayload = payload as
-      | { error?: { code?: string; message?: string; details?: unknown } }
+      | { error?: { code?: string; message?: string; details?: unknown }; detail?: { msg: string }[] }
       | null;
     throw new ApiError(
-      errorPayload?.error?.message ?? `La petición falló con HTTP ${response.status}.`,
+      errorPayload?.error?.message ?? (Array.isArray(errorPayload?.detail) ? errorPayload.detail.map((issue) => issue.msg).join("; ") : `La petición falló con HTTP ${response.status}.`),
       errorPayload?.error?.code ?? "HTTP_ERROR",
       response.status,
       errorPayload?.error?.details,
@@ -65,6 +66,30 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   return payload as T;
 }
+
+export type Target = "ffmpeg" | "resolve" | "capcut";
+export type Preflight = { revision: string; available: boolean; reason: string; verified_capabilities: string[];
+  unsupported: { path: string; reason: string; element_id?: string }[]; warnings: string[] };
+export type Job = { id: string; project_id: string; kind: string; plugin_id: string; output_path: string;
+  status: "queued" | "running" | "done" | "failed"; progress: number; log: string; error: string | null };
+export type Draft = { id: string; path: string };
+const json = (method: "POST" | "PUT", body: unknown) => ({ method, body: JSON.stringify(body) });
+const path = (id: string) => `/projects/${encodeURIComponent(id)}`;
+
+export const projects = {
+  list: () => request<{ items: ProjectSummary[] }>("/projects"),
+  create: (name: string) => request<Project>("/projects", json("POST", { name })),
+  get: (id: string) => request<Project>(path(id)),
+  import: (id: string, file: string) => request<{ asset: Asset }>(`${path(id)}/media`, json("POST", { path: file })),
+  validate: (id: string, timeline: Timeline) => request<Timeline>(`${path(id)}/timeline/validate`, json("POST", timeline)),
+  save: (id: string, timeline: Timeline) => request<Project>(`${path(id)}/timeline`, json("PUT", timeline)),
+  preflight: (id: string, target: Target) => request<Preflight>(`${path(id)}/exports/${target}/preflight`),
+  resolve: (id: string, revision: string) => request<{ name: string; timeline: string; clips: number }>(`${path(id)}/exports/resolve`, json("POST", { revision })),
+  draft: (id: string, revision: string) => request<{ draft: Draft }>(`${path(id)}/drafts`, json("POST", { revision })),
+  render: (id: string, revision: string, output_path: string) => request<Job>(`${path(id)}/renders/final`, json("POST", { revision, output_path })),
+  jobs: (id: string) => request<{ items: Job[] }>(`/jobs?project_id=${encodeURIComponent(id)}`),
+  result: (id: string) => `${API_BASE_URL}/api/jobs/${encodeURIComponent(id)}/result`,
+};
 
 function actionBody(confirmPermissions?: boolean): RequestInit {
   return {
