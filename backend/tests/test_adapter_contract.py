@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from sqlmodel import Session, create_engine
 
 from app.core.errors import (
     AdapterNotRegistered,
@@ -10,7 +13,26 @@ from app.core.errors import (
 )
 from app.editing.adapter import EditorOperation, execute_operation
 from app.editing.registry import AdapterRegistry
+from app.models.plugin import PluginState
 from tests.dummy_adapter import DummyAdapter
+
+
+def _state_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from app.core import db
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'state.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    monkeypatch.setattr(db, "engine", engine)
+    db.init_db()
+    return engine
+
+
+def _save_state(engine, *, enabled: bool, connected: bool) -> None:
+    with Session(engine) as session:
+        session.add(PluginState(plugin_id="dummy", enabled=enabled, connected=connected))
+        session.commit()
 
 
 def test_unsupported_method_raises_capability_not_available() -> None:
@@ -88,14 +110,72 @@ def test_wrapper_rejects_invalid_arguments(monkeypatch: pytest.MonkeyPatch) -> N
     assert adapter.calls == []
 
 
+def test_wrapper_rejects_disconnected_plugin_from_persisted_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = _state_engine(tmp_path, monkeypatch)
+    _save_state(engine, enabled=True, connected=False)
+    adapter = DummyAdapter(operations={EditorOperation.CREATE_TIMELINE})
+
+    with pytest.raises(PluginNotConnected) as excinfo:
+        execute_operation(
+            adapter,
+            EditorOperation.CREATE_TIMELINE,
+            {"project_id": "p1", "name": "Doc"},
+        )
+
+    assert excinfo.value.details["plugin_id"] == "dummy"
+    assert adapter.capability_calls == 0
+    assert adapter.calls == []
+
+
 def test_wrapper_rejects_disabled_plugin_from_persisted_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = _state_engine(tmp_path, monkeypatch)
+    _save_state(engine, enabled=False, connected=True)
+    adapter = DummyAdapter(operations={EditorOperation.CREATE_TIMELINE})
+
+    with pytest.raises(PluginNotConnected):
+        execute_operation(
+            adapter,
+            EditorOperation.CREATE_TIMELINE,
+            {"project_id": "p1", "name": "Doc"},
+        )
+
+    assert adapter.capability_calls == 0
+    assert adapter.calls == []
+
+
+def test_wrapper_rejects_plugin_without_persisted_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _state_engine(tmp_path, monkeypatch)
+    adapter = DummyAdapter(operations={EditorOperation.CREATE_TIMELINE})
+
+    with pytest.raises(PluginNotConnected):
+        execute_operation(
+            adapter,
+            EditorOperation.CREATE_TIMELINE,
+            {"project_id": "p1", "name": "Doc"},
+        )
+
+    assert adapter.calls == []
+
+
+def test_execute_operation_does_not_accept_connected_argument(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     adapter = DummyAdapter(operations={EditorOperation.CREATE_TIMELINE})
-    monkeypatch.setattr("app.editing.adapter._plugin_is_connected", lambda _: False)
+    monkeypatch.setattr("app.editing.adapter._plugin_is_connected", lambda _: True)
 
-    with pytest.raises(PluginNotConnected):
-        execute_operation(adapter, EditorOperation.CREATE_TIMELINE, {"project_id": "p1", "name": "Doc"})
+    with pytest.raises(TypeError):
+        execute_operation(
+            adapter,
+            EditorOperation.CREATE_TIMELINE,
+            {"project_id": "p1", "name": "Doc"},
+            connected=True,
+        )
 
     assert adapter.calls == []
 
