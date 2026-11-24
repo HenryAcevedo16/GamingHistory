@@ -10,7 +10,7 @@ no lo que se planea. Última actualización: **2026-11-23** (Fase 7 verificada e
 | 1 | Monorepo, Plugin Manager, manifiestos, base de datos y pantalla Extensiones con datos reales | **Completada y verificada** |
 | 2 | Interfaz `EditorAdapter`, timeline unificado y `EditingRouter` | **Completada y verificada** |
 | 3 | Integración FFmpeg completa y verificada con una operación real | **Completada y verificada** |
-| 4 | Integración VectCutAPI/CapCut verificada | **Completada y verificada** (disco y confirmación visual en CapCut) |
+| 4 | Integración VectCutAPI/CapCut verificada | **Completada y verificada** (disco y confirmación del usuario en CapCut 8.5 gratuito) |
 | 5 | Integración DaVinci Resolve verificada | **Completada y verificada** (Free 21.0.4.5, puente in-app) |
 | 6 | Integración Descript opcional | Pendiente (sin código) |
 | 7 | Editor visual integrado con la timeline | **Completada y verificada** (Edge, FFmpeg, CapCut local y API viva de Resolve) |
@@ -593,7 +593,7 @@ las fases anteriores.
 ## Fase 4 — VectCutAPI/CapCut (2026-11-23, hora local)
 
 - **Estado:** completada; generación, lectura del artefacto real y revisión visual en CapCut verificadas.
-- **Commit de cierre:** `fase 4: adaptador vectcutapi capcut` (el commit que incluye esta entrada).
+- **Commit de cierre:** `915f6e5` (`fase 4: adaptador vectcutapi capcut`).
 - **Implementado:**
   - `editing/adapters/vectcut.py`: adaptador autodescubierto, conversor Unified → CapCut,
     validación de rutas, HTTP con timeout y auditoría, comprobación del contenido en disco
@@ -630,7 +630,9 @@ las fases anteriores.
     devolvió `selected=null` antes de la prueba y `vectcut-capcut`, `executable=true` después.
   - `POST /api/projects/e43dbd1f6445464a9898b8f826bca8bd/drafts/dfd_cat_1795484464_505eff12/deploy`
     con `{"confirm_copy":true}` → copia autorizada y verificada en la carpeta local de CapCut.
-  - Revisión manual en CapCut → el usuario confirmó que el borrador se ve.
+  - Revisión manual confirmada por el usuario en CapCut 8.5 (versión gratuita) → el borrador
+    `dfd_cat_1795484464_505eff12` aparece en la lista y abre sin errores. El clip dura 1 s
+    y el subtítulo **GHS Phase 4 - CapCut** se ve y es editable.
   - En `backend/`: `$env:VECTCUT_ROOT='E:\VectCutAPI'; $env:GHS_VECTCUT_LIVE='1'; python -m pytest -o addopts= -q -rsP`
     → **60 passed, 1 skipped** (Resolve real no activado); la prueba viva de VectCut verificó
     vídeo, audio básico y subtítulo en disco. `python -m compileall -q app` → exit 0.
@@ -639,8 +641,8 @@ las fases anteriores.
     `GET http://127.0.0.1:3001/extensions` → 200; `GET http://127.0.0.1:8012/api/health`
     con ese origen → 200, CORS correcto, 4 manifiestos y 0 errores.
 - **No probado / limitaciones:**
-  - Se confirmó la visualización; no se verificó por separado editar y volver a guardar el
-    subtítulo. El formato `capcut_legacy` es privado y el editor puede dejar de abrirlo después
+  - El subtítulo es editable; no se verificó que un cambio se conserve tras guardar y volver a abrir
+    el borrador. El formato `capcut_legacy` es privado y el editor puede dejar de abrirlo después
     de una actualización. No hay render final por VectCutAPI,
     efectos, transiciones ni materiales Pro en este flujo.
   - No se usan enlaces de vista previa, descarga remota ni subida. El cliente limita HTTP a
