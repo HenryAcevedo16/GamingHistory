@@ -1,8 +1,8 @@
 # Gaming History Studio - inicia los servidores en ventanas separadas.
 # Ajusta las rutas de abajo a tu PC y ejecuta:  .\iniciar-studio.ps1
-# Opciones:  -SinVectCut  (no inicia VectCutAPI)
+# Opciones:  -SinVectCut  (no inicia VectCutAPI), -ConOpenCode (inicia OpenCode local)
 
-param([switch]$SinVectCut)
+param([switch]$SinVectCut, [switch]$ConOpenCode)
 
 $Repo      = "E:\GamingHistory"        # raíz del repo clonado
 $VectCut   = "E:\VectCutAPI"           # carpeta de VectCutAPI
@@ -11,6 +11,15 @@ $ApiUrl    = "http://127.0.0.1:$ApiPort"
 
 function Probar-Puerto($puerto) {
     return [bool](Get-NetTCPConnection -LocalPort $puerto -State Listen -ErrorAction SilentlyContinue)
+}
+
+# OpenCode (opcional). El helper pasa el secreto solo al entorno del hijo.
+if ($ConOpenCode) {
+    if (Probar-Puerto 4096) {
+        Write-Host "OpenCode: el puerto 4096 ya esta en uso; no se inicia otro." -ForegroundColor Yellow
+    } else {
+        & "$Repo\backend\.venv\Scripts\python.exe" "$Repo\scripts\start_opencode.py"
+    }
 }
 
 # Backend

@@ -75,6 +75,7 @@ Si una capacidad no está disponible, la UI debe mostrarlo con claridad (botón 
 7. Editor visual integrado con la línea de tiempo.
 8. Respaldo local de proyectos y restauración como copia. Los destinos remotos quedan fuera de esta fase.
 9. Asistente de texto local de uso personal mediante Claude Agent SDK y la sesión de Claude Code de la PC. Solo un turno, sin herramientas ni MCP. Ningún texto se envía a Anthropic sin un clic explícito; solo se envía el texto pegado o el mensaje fijo del diagnóstico. Registrar operación y resultado sin guardar el contenido en auditoría. Previsualizar sugerencias de guion/cortes y de subtítulos SRT antes de permitir su aplicación.
+   - 9b. Añadir OpenCode V2 como proveedor elegible, con catálogo real, verificación manual individual y servidor autenticado limitado a `127.0.0.1`. Mantener las garantías de texto, confirmación y auditoría de la Fase 9.
 
 ## Criterio de éxito
 Desde la app se debe poder: seleccionar un documental, elegir un editor, enviar recursos y timeline, ejecutar la edición vía plugin, recuperar el resultado, revisarlo, continuar en la app externa si corresponde y guardar/respaldar el proyecto.

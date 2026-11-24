@@ -173,7 +173,7 @@ function Editor({ initial }: { initial: Project }) {
       const result = await projects.saveScriptPlan(id, text);
       setScriptPlan(result.text);
     }, (error) => setEditError(message(error)))} applySubtitles={(cues) => {
-      const newTrack: Track = { kind: "subtitle", id: crypto.randomUUID(), name: "Subtítulos · Claude", cues };
+      const newTrack: Track = { kind: "subtitle", id: crypto.randomUUID(), name: "Subtítulos · IA", cues };
       return edit({ ...timeline, tracks: [...timeline.tracks, newTrack] }, cues[0]?.id);
     }} />
     <ExportPanel id={id} dirty={dirty} version={version} onRender={() => setJobsVersion((value) => value + 1)} />

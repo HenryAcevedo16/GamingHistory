@@ -7,12 +7,13 @@ from contextlib import contextmanager
 from typing import Literal
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import Field, StrictBool
 from sqlmodel import Session
 
 from app.ai.errors import AIError
-from app.ai.provider import ClaudeAgentSDKProvider
+from app.ai.opencode import OpenCodeServerProvider
+from app.ai.provider import AIProvider, ClaudeAgentSDKProvider
 from app.core.config import settings
 from app.core.db import get_session
 from app.core.errors import StudioError
@@ -21,10 +22,12 @@ from app.editing.timeline import StrictModel, SubtitleCue
 from app.models.audit import AuditLog
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+ProviderName = Literal["claude", "opencode"]
+_AUDIT_IDS = {"claude": "claude-ai", "opencode": "opencode-ai"}
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 _SENSITIVE = re.compile(
     r"(?im)[a-z]:[\\/]|[\\/]{2}(?!/)|(?<![\w:/])/(?!/)[\w.~%-]"
-    r"|file:|(?:^|\s)\.env(?:[.\w-]*)(?=$|[\s,;])"
+    r"|file:|(?<![\w.])\.env(?:[.\w-]*)(?![\w.-])"
     r"|^[ \t]*(?:export[ \t]+)?[a-z_][a-z0-9_]*[ \t]*="
     r"|(?:api[ _-]?key|access[ _-]?token|secret|password|authorization)\s*[:=]"
     r"|\b(?:sk-[a-z0-9_-]{8,}|gh[pousr]_[a-z0-9_]{8,}|github_pat_[a-z0-9_]+"
@@ -46,6 +49,8 @@ _SUBTITLE_SYSTEM = (
 class GenerateRequest(StrictModel):
     text: str = Field(min_length=1, max_length=12000, repr=False)
     confirmed: StrictBool = False
+    provider: ProviderName = "claude"
+    model: str | None = Field(default=None, min_length=1, max_length=401)
 
 
 class SubtitleRequest(GenerateRequest):
@@ -65,13 +70,28 @@ def _provider() -> ClaudeAgentSDKProvider:
     return ClaudeAgentSDKProvider(settings.ai_timeout_seconds, settings.ai_model)
 
 
-def _record(session: Session, action: str, status: str, detail: str = "") -> None:
-    session.add(AuditLog(plugin_id="claude-ai", action=action, status=status, detail=detail))
+def _opencode(model: str | None = None) -> OpenCodeServerProvider:
+    password = settings.opencode_server_password
+    return OpenCodeServerProvider(settings.opencode_server_url, password.get_secret_value() if password else "",
+                                  settings.ai_timeout_seconds, model, default_model=settings.opencode_model or None)
+
+
+def _generation_provider(payload: GenerateRequest) -> AIProvider:
+    if payload.provider == "opencode":
+        return _opencode(payload.model)
+    if payload.model is not None:
+        raise StudioError("La elección de modelo solo está disponible para OpenCode.",
+                          code="AI_INVALID_INPUT", status_code=422)
+    return _provider()
+
+
+def _record(session: Session, provider: ProviderName, action: str, status: str, detail: str = "") -> None:
+    session.add(AuditLog(plugin_id=_AUDIT_IDS[provider], action=action, status=status, detail=detail))
     session.commit()
 
 
 @contextmanager
-def _explicit(request: Request, session: Session, action: str, confirmed: bool = True) -> Iterator[None]:
+def _require_explicit(request: Request, confirmed: bool) -> None:
     origin = request.headers.get("origin")
     if (not confirmed or request.headers.get("X-GHS-AI-Action") != "confirm"
             or request.url.hostname not in _LOOPBACK
@@ -79,18 +99,24 @@ def _explicit(request: Request, session: Session, action: str, confirmed: bool =
                 (origin not in settings.cors_origins or urlsplit(origin).hostname not in _LOOPBACK))):
         raise StudioError("La acción de IA requiere confirmación explícita desde Studio local.",
                           code="AI_CONFIRMATION_REQUIRED", status_code=403)
-    _record(session, action, "started")
+
+
+@contextmanager
+def _explicit(request: Request, session: Session, provider: ProviderName,
+              action: str, confirmed: bool = True) -> Iterator[None]:
+    _require_explicit(request, confirmed)
+    _record(session, provider, action, "started")
     try:
         yield
     except StudioError as exc:
-        _record(session, action, "error", exc.code)
+        _record(session, provider, action, "error", exc.code)
         raise
     except Exception:
         session.rollback()
-        _record(session, action, "error", AIError.code)
+        _record(session, provider, action, "error", AIError.code)
         raise AIError("No se pudo completar la operación de IA.") from None
     else:
-        _record(session, action, "ok")
+        _record(session, provider, action, "ok")
 
 
 def _user_text(text: str) -> str:
@@ -121,18 +147,35 @@ def _keeps_timing(original: list[SubtitleCue], result: list[SubtitleCue], mode: 
 
 
 @router.get("/status")
-def status(request: Request, response: Response, session: Session = Depends(get_session)) -> dict:
+def status(request: Request, response: Response, provider: ProviderName | None = None,
+           model: str | None = Query(default=None, min_length=1, max_length=401),
+           session: Session = Depends(get_session)) -> dict:
     response.headers["Cache-Control"] = "no-store"
-    with _explicit(request, session, "status"):
-        return _provider().check_status()
+    _require_explicit(request, True)
+    results = {}
+    for name in (provider,) if provider else ("claude", "opencode"):
+        try:
+            with _explicit(request, session, name, "status"):
+                results[name] = (_provider() if name == "claude" else _opencode(model)).check_status()
+        except StudioError as exc:
+            results[name] = {"ready": False, "code": exc.code, "message": str(exc)}
+    return {"providers": results}
+
+
+@router.get("/models")
+def models(request: Request, response: Response, session: Session = Depends(get_session)) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    with _explicit(request, session, "opencode", "list_models"):
+        return _opencode().list_models()
 
 
 @router.post("/script", response_model=ScriptSuggestion)
 def suggest_script(payload: GenerateRequest, request: Request, response: Response,
                    session: Session = Depends(get_session)) -> ScriptSuggestion:
     response.headers["Cache-Control"] = "no-store"
-    with _explicit(request, session, "suggest_script", payload.confirmed):
-        text = _provider().generate_text(_user_text(payload.text), _SCRIPT_SYSTEM)
+    with _explicit(request, session, payload.provider, "suggest_script", payload.confirmed):
+        text = _user_text(payload.text)
+        text = _generation_provider(payload).generate_text(text, _SCRIPT_SYSTEM)
         if len(text) > 60000:
             raise AIError("La sugerencia de guion superó el límite de longitud.")
         return ScriptSuggestion(text=text)
@@ -142,7 +185,7 @@ def suggest_script(payload: GenerateRequest, request: Request, response: Respons
 def suggest_subtitles(payload: SubtitleRequest, request: Request, response: Response,
                       session: Session = Depends(get_session)) -> SubtitleSuggestion:
     response.headers["Cache-Control"] = "no-store"
-    with _explicit(request, session, "suggest_subtitles", payload.confirmed):
+    with _explicit(request, session, payload.provider, "suggest_subtitles", payload.confirmed):
         text = _user_text(payload.text)
         try:
             original = parse_srt(text)
@@ -153,15 +196,15 @@ def suggest_subtitles(payload: SubtitleRequest, request: Request, response: Resp
                        if payload.mode == "correct" else
                        "Convierte la transcripción ya temporizada en subtítulos breves. Puedes "
                        "dividir bloques, pero mantén los subtítulos dentro de sus intervalos originales.")
-        srt = _provider().generate_text(text, _SUBTITLE_SYSTEM + instruction)
+        srt = _generation_provider(payload).generate_text(text, _SUBTITLE_SYSTEM + instruction)
         try:
             if len(srt) > 60000:
                 raise ValueError
             cues = parse_srt(srt)
         except ValueError:
-            raise AIError("Claude devolvió un SRT inválido para Studio. La sugerencia fue rechazada.",
+            raise AIError("El proveedor devolvió un SRT inválido para Studio. La sugerencia fue rechazada.",
                           code="AI_INVALID_SRT_OUTPUT") from None
         if not _keeps_timing(original, cues, payload.mode):
-            raise AIError("Claude cambió los tiempos permitidos del SRT. La sugerencia fue rechazada.",
+            raise AIError("El proveedor cambió los tiempos permitidos del SRT. La sugerencia fue rechazada.",
                           code="AI_INVALID_SRT_OUTPUT")
         return SubtitleSuggestion(srt=srt, cues=cues)

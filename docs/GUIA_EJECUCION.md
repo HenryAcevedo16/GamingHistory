@@ -15,6 +15,7 @@ Repo: https://github.com/HenryAcevedo16/GamingHistory  (local: E:\GamingHistory)
 | 8 Respaldo local | Hecha y verificada |
 | 8 Google Drive | Pospuesta |
 | 9 Asistente de texto | Verificado con Claude Code y SDK en Windows |
+| 9b Proveedor OpenCode | Verificado con OpenCode 2.4.1 y un modelo de ChatGPT en Windows |
 
 ## 1. Preparar (una sola vez)
 ```powershell
@@ -33,7 +34,7 @@ cd ..
 
 ## 2. Cerrar servidores viejos
 ```powershell
-foreach ($p in 8000,8011,8012,8017,8018,3000,3001,3017,3018,9000) {
+foreach ($p in 8000,8011,8012,8017,8018,3000,3001,3017,3018,9000,4096) {
   Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue |
     ForEach-Object { Stop-Process -Id $_.OwningProcess -Force; "Cerrado $p" }
 }
@@ -62,9 +63,12 @@ Revisa `$Repo` y `$VectCut` al inicio de `iniciar-studio.ps1`. Doble clic en `in
 8. /backup: elegir carpeta, previsualizar, crear respaldo, verificar hashes, restaurar como copia.
 
 ## 6. Apagar
-`detener-studio.bat` (cierra 8011, 3000 y 9000) o el bloque del paso 2.
+`detener-studio.bat` (cierra 8011, 3000, 9000 y OpenCode si escucha en
+`127.0.0.1:4096`) o el bloque del paso 2, solo para puertos de Studio.
 
-## 7. Asistente de texto (Claude Code)
+## 7. Asistente de texto
+
+### Claude Code
 
 En **cada PC** (trabajo y casa), instala o actualiza Claude Code y, con el mismo
 usuario de Windows que abre Studio, ejecuta:
@@ -81,11 +85,11 @@ Studio requiere una CLI instalada con `--restricted` y soporte de mensajes
 Extensiones indica que esa CLI no admite el aislamiento, actualízala. Se comprobó
 `claude-agent-sdk` 0.2.188 en el entorno real de Python 3.14.3. No configures
 `ANTHROPIC_API_KEY` para Studio: usa la sesión `claude.ai` de Claude Code, no el
-binario incluido por el SDK. No hay proceso extra que iniciar ni cambios en
-`iniciar-studio.ps1`. Para configurar el backend, usa `GHS_AI_TIMEOUT_SECONDS`
+binario incluido por el SDK. Claude Code no requiere un servidor extra.
+Para configurar el backend, usa `GHS_AI_TIMEOUT_SECONDS`
 (60 por defecto; máximo 300) y, opcionalmente, `GHS_AI_MODEL` (p. ej. `sonnet`).
 
-- En **Extensiones**, pulsa **Verificar conexión con Claude**. Este botón envía
+- En **Extensiones**, pulsa **Verificar conexión** en la tarjeta de Claude Code. Este botón envía
   un mensaje de prueba fijo (sin datos de proyecto) y exige una respuesta real.
 - En un proyecto, pega un texto de guion o un SRT válido de hasta 12.000
   caracteres. Corregir conserva los tiempos; generar también requiere texto
@@ -122,6 +126,60 @@ y [autenticación del quickstart](https://code.claude.com/docs/en/agent-sdk/quic
 El quickstart documenta API keys para integraciones y restringe ofrecer la
 sesión o las cuotas de `claude.ai` en productos de terceros. Este flujo es
 exclusivamente personal y local, no para distribución o servicio compartido.
+
+### OpenCode (opcional)
+
+1. En cada PC, instala **OpenCode V2** (probado con `2.4.1`) y confirma que
+   `opencode --version` funciona en PowerShell. Con el mismo usuario de Windows que
+   ejecutará Studio, corre `opencode auth login` y selecciona **OpenAI / ChatGPT**
+   para usar tu sesión. `opencode auth list` permite revisar las cuentas sin exportar credenciales.
+2. Crea o edita `backend/.env` (ignorado por Git) y asigna
+   `GHS_OPENCODE_SERVER_PASSWORD` a una contraseña local fuerte. No es tu
+   contraseña de ChatGPT. No la guardes en el frontend ni la pegues en un comando.
+   Por defecto Studio usa `http://127.0.0.1:4096`. `GHS_OPENCODE_SERVER_URL` solo
+   admite HTTP a `127.0.0.1`; el arranque automático siempre usa el puerto 4096.
+   `GHS_OPENCODE_MODEL` es opcional: acepta el ID `proveedor/modelo` del catálogo.
+   Si no se configura, Studio intenta usar el predeterminado anunciado por OpenCode.
+3. Desde la raíz, corre `.\iniciar-studio.ps1 -ConOpenCode` (puedes añadir
+   `-SinVectCut`). El lanzador lee la contraseña desde `backend/.env`, la pasa
+   solo en el entorno del proceso como `OPENCODE_SERVER_PASSWORD` y oculta la
+   salida de `serve`, que puede imprimir el secreto. Si Studio ya estaba abierto,
+   reinicia también el backend para cargar el `.env`. No expongas `serve` en la red.
+4. En **Extensiones**, pulsa **Verificar conexión** en la tarjeta de OpenCode.
+   Envía un mensaje fijo al modelo predeterminado, sin información del proyecto.
+   En el asistente de un proyecto, elige **OpenCode**, pulsa **Cargar modelos** y
+   selecciona el que quieras usar. Para no usar el predeterminado de otro servicio,
+   puedes configurar `GHS_OPENCODE_MODEL` con el ID de tu modelo de ChatGPT. Cambiar de
+   proveedor o de modelo no envía texto ni ejecuta comprobaciones. Solo el proveedor
+   se recuerda en ese navegador.
+
+**Si no responde:** `AI_SERVER_UNAVAILABLE` indica que el proceso no escucha o
+la conexión se interrumpió; revisa el puerto con `Get-NetTCPConnection -LocalPort 4096`
+y vuelve a arrancar con `-ConOpenCode`. `AI_AUTH_FAILED` indica falta/rechazo de la
+contraseña del servidor, un servidor sin protección, o autenticación ausente o
+rechazada por el proveedor del modelo: lee el detalle antes de cambiar el `.env`
+o repetir `opencode auth login`. Si no hay modelo, vuelve a cargar el catálogo;
+si el predeterminado configurado ya no aparece, elige otro ID disponible. Para
+`AI_TIMEOUT`, revisa la conexión del modelo o ajusta `GHS_AI_TIMEOUT_SECONDS`.
+
+Prueba real con `opencode serve` en ejecución y sin tocar la base de proyectos:
+
+```powershell
+.\backend\.venv\Scripts\python.exe scripts\verify_phase9b.py
+.\backend\.venv\Scripts\python.exe scripts\verify_phase9b.py --suggestions
+```
+
+Usa `--model <proveedor/modelo>` para elegir un modelo distinto. Si no puede
+contactar al servidor, autenticar o generar, termina con **No verificado** y
+código distinto de cero. Al enviar texto, la inferencia puede salir de la PC
+hacia el servicio del modelo elegido; lo local es la conexión de Studio a OpenCode.
+Studio usa una sesión nueva con todos los permisos denegados, la generación
+transitoria de texto (sin bucle de agente) y borra la sesión al terminar.
+La auditoría de Studio tampoco guarda texto. Esta integración supone un servidor
+OpenCode y una configuración local de confianza; no es un sandbox del sistema.
+
+Referencias: [servidor](https://opencode.ai/docs/server), [SDK v2](https://opencode.ai/docs/sdk),
+[API v2](https://opencode.ai/docs/api) y [autenticación del servidor](https://opencode.ai/docs/migrate-v1#server-authentication).
 
 ## Si algo falla
 - Botón deshabilitado: abrir el detalle del plugin; indica el motivo.

@@ -19,3 +19,13 @@ class AINotLoggedIn(AIError):
 class AITimeout(AIError):
     code = "AI_TIMEOUT"
     status_code = 504
+
+
+class AIServerUnavailable(AIError):
+    code = "AI_SERVER_UNAVAILABLE"
+    status_code = 503
+
+
+class AIAuthFailed(AIError):
+    code = "AI_AUTH_FAILED"
+    status_code = 503

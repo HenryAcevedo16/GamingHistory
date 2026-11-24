@@ -76,15 +76,24 @@ export type Draft = { id: string; path: string };
 const json = (method: "POST" | "PUT", body: unknown) => ({ method, body: JSON.stringify(body) });
 const path = (id: string) => `/projects/${encodeURIComponent(id)}`;
 
-export type AIStatus = { ready: boolean; cli_version: string; sdk_importable: boolean; session_active: boolean; tools_disabled: boolean };
+export const aiProviders = { claude: "Claude Code", opencode: "OpenCode" } as const;
+export type AIProvider = keyof typeof aiProviders;
+export type AIStatus = { ready: true; cli_version?: string; tools_disabled: boolean } |
+  { ready: false; code: string; message: string };
+export type AIModelList = { models: string[]; default_model: string | null };
+type AISelection = { provider: AIProvider; model?: string };
 export type AICue = { id: string; start_seconds: number; duration_seconds: number; text: string };
 export type SubtitleMode = "generate" | "correct";
 const aiAction = { "X-GHS-AI-Action": "confirm" };
 export const ai = {
-  status: () => request<AIStatus>("/ai/status", { headers: aiAction }),
-  script: (text: string) => request<{ text: string }>("/ai/script", { ...json("POST", { text, confirmed: true }), headers: aiAction }),
-  subtitles: (text: string, mode: SubtitleMode) => request<{ srt: string; cues: AICue[] }>("/ai/subtitles", {
-    ...json("POST", { text, mode, confirmed: true }), headers: aiAction,
+  status: async (provider: AIProvider) => (await request<{ providers: Record<AIProvider, AIStatus> }>(
+    `/ai/status?provider=${provider}`, { headers: aiAction })).providers[provider],
+  models: () => request<AIModelList>("/ai/models", { headers: aiAction }),
+  script: (text: string, selection: AISelection) => request<{ text: string }>("/ai/script", {
+    ...json("POST", { text, ...selection, confirmed: true }), headers: aiAction,
+  }),
+  subtitles: (text: string, mode: SubtitleMode, selection: AISelection) => request<{ srt: string; cues: AICue[] }>("/ai/subtitles", {
+    ...json("POST", { text, mode, ...selection, confirmed: true }), headers: aiAction,
   }),
 };
 

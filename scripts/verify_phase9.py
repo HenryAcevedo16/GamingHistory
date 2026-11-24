@@ -43,11 +43,13 @@ def main() -> int:
         client = TestClient(app, base_url="http://localhost")
         if client.get("/api/ai/status").status_code != 403:
             raise RuntimeError("El diagnóstico no exigió una acción explícita.")
-        response = client.get("/api/ai/status", headers=HEADERS)
+        response = client.get("/api/ai/status", params={"provider": "claude"}, headers=HEADERS)
         if not response.is_success:
             error = response.json().get("error", {})
             raise RuntimeError(f"{error.get('code', response.status_code)}: {error.get('message', 'Falló el diagnóstico.')}")
-        status = response.json()
+        status = response.json()["providers"]["claude"]
+        if not status["ready"]:
+            raise RuntimeError(f"{status['code']}: {status['message']}")
         if not all(status.get(check) is True for check in ("sdk_importable", "session_active", "tools_disabled", "ready")):
             raise RuntimeError("El diagnóstico no confirmó todos los requisitos.")
         print(f"Claude Code {status['cli_version']}: sesión claude.ai sin API key; prueba Read sin herramientas ni MCP.")

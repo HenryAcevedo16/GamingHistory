@@ -1,7 +1,7 @@
 # PROGRESS — Gaming History Studio
 
 Bitácora operativa del repositorio. Describe lo que existe y lo que se verificó,
-no lo que se planea. Última actualización: **2026-11-23** (Fase 9 verificada con Claude y en navegador).
+no lo que se planea. Última actualización: **2026-11-23** (Fase 9b verificada con OpenCode y en navegador).
 
 ## 1. Estado actual
 
@@ -16,6 +16,7 @@ no lo que se planea. Última actualización: **2026-11-23** (Fase 9 verificada c
 | 7 | Editor visual integrado con la timeline | **Completada y verificada** (Edge, FFmpeg, CapCut local y API viva de Resolve) |
 | 8 | Respaldo local de proyectos y restauración como copia | **Completada y verificada** (Edge, archivos y hashes reales) |
 | 9 | Asistente personal de guion y subtítulos vía Claude Agent SDK | **Completada y verificada** (Claude Code y Edge reales) |
+| 9b | OpenCode V2 elegible en el asistente, modelos reales y diagnóstico manual | **Completada y verificada** (OpenCode 2.4.1 con ChatGPT y Edge) |
 
 Notas de alcance:
 
@@ -822,3 +823,45 @@ las fases anteriores.
   API/navegador de la fase usaron bases separadas de la habitual.
 - **Próximo paso:** instalar/actualizar Claude Code y repetir `verify_phase9.py` en la
   segunda PC antes de usarla con material propio.
+
+## Fase 9b — Proveedor OpenCode (2026-11-23, hora local)
+
+- **Estado:** completada y verificada en esta PC. Sin tablas ni migraciones.
+- **Commit de cierre:** `fase 9b: proveedor OpenCode para el asistente` (incluye esta entrada).
+- **Implementado:**
+  - `backend/app/ai/opencode.py`: `httpx` sin proxies ni redirecciones, solo `127.0.0.1`,
+    contraseña Basic obligatoria, catálogo `/api/model` y selección de modelo validada
+    contra ese catálogo. No devuelve configuración, credenciales ni errores crudos del servidor.
+  - API v2: sesión nueva con permiso `*/*` denegado y modelo confirmado; una única llamada
+    de texto transitorio a `/api/session/{id}/generate`, no `/prompt`; borrado de la sesión
+    al terminar. El diagnóstico comprueba que no quedaron mensajes ni permisos pendientes.
+  - UI: `localStorage` guarda solo el proveedor, catálogo a petición y verificación
+    individual en Extensiones. `/api/ai/status` agrupa resultados por proveedor
+    (filtro `?provider=`); ambos endpoints de sugerencias reciben `provider`.
+    La vista previa y la auditoría sin texto se mantienen; el proveedor queda identificado
+    con `claude-ai` u `opencode-ai` en la tabla existente.
+  - Inicio opcional con `.\iniciar-studio.ps1 -ConOpenCode`, basado en
+    `scripts/start_opencode.py`; guía y configuración en `docs/GUIA_EJECUCION.md`.
+- **Probado realmente:**
+  - OpenAPI del servidor 2.4.1 contrastado con las referencias oficiales de servidor,
+    SDK y API v2. `opencode serve` real inició con contraseña leída de un `.env` temporal;
+    sin cabecera Basic, devolvió 401. Se descubrieron 119 modelos en ese momento.
+  - `scripts/verify_phase9b.py --suggestions` → diagnóstico, guion, corrección y generación
+    SRT reales con `openai/gpt-6.2-sol`; sin historial de mensajes ni permisos pendientes y
+    borrado HTTP 204 de las sesiones. Auditoría comprobada sin entrada ni salida.
+  - Con contraseña incorrecta → `AI_AUTH_FAILED`; con servidor apagado →
+    `AI_SERVER_UNAVAILABLE`. Ambos reportaron **No verificado** y salida 1.
+    `scripts/verify_phase9.py` volvió a pasar con Claude Code real.
+  - Backend: **119 pruebas pasaron, 2 omitidas** (Resolve/VectCut en vivo).
+    Frontend: lint, TypeScript, build y 3 pruebas pasaron. Sintaxis PowerShell validada.
+  - Edge headless 158.0.4370.33 con API y base temporal: no hubo solicitudes de IA al
+    abrir Extensiones, cambiar proveedor ni recargar. Se mantuvo la elección al recargar.
+    Un clic verificó solo OpenCode, otro cargó el catálogo, y el envío de guion usó el
+    modelo elegido y mostró vista previa real sin escribir en el proyecto.
+- **No probado / deuda:** no se repitió en la segunda PC ni se cerró el login real:
+  ausencia de cuenta/modelos y timeout se cubrieron con HTTP de prueba. Se verificó
+  el helper de arranque y la sintaxis de PowerShell; no se ejecutó el apagado por
+  lotes completo contra servicios en uso. Solo se verificó OpenCode 2.4.1. El servidor
+  local y su configuración deben ser de confianza, y el servicio del modelo puede ser remoto.
+- **Estado y próximo paso:** se apagaron los procesos temporales y se retiró su contraseña.
+  Configurar `backend/.env` y repetir la verificación en la otra PC.

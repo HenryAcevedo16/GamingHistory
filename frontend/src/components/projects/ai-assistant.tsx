@@ -1,11 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
-import { ai, ApiError, type AICue, type SubtitleMode } from "@/lib/api";
+import { ai, aiProviders, ApiError, type AICue, type AIModelList, type AIProvider, type SubtitleMode } from "@/lib/api";
 import { field, message, panel, Problem } from "./studio-ui";
 
 type Suggestion = { kind: "script"; text: string } | { kind: "subtitles"; text: string; cues: AICue[] };
+const providerKey = "ghs.ai.provider";
+const defaultProvider = (): AIProvider => "claude";
+function readProvider(): AIProvider {
+  try { return localStorage.getItem(providerKey) === "opencode" ? "opencode" : "claude"; }
+  catch { return defaultProvider(); }
+}
+function subscribeProvider(change: () => void) {
+  window.addEventListener("storage", change);
+  return () => window.removeEventListener("storage", change);
+}
 
 export function AIAssistant({ plan, editorBusy, applyPlan, applySubtitles }: {
   plan: string;
@@ -16,19 +26,43 @@ export function AIAssistant({ plan, editorBusy, applyPlan, applySubtitles }: {
   const [script, setScript] = useState("");
   const [srt, setSrt] = useState("");
   const [mode, setMode] = useState<SubtitleMode>("correct");
+  const storedProvider = useSyncExternalStore(subscribeProvider, readProvider, defaultProvider);
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider | null>(null);
+  const provider = selectedProvider ?? storedProvider;
+  const [catalog, setCatalog] = useState<AIModelList | null>(null);
+  const [model, setModel] = useState("");
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
-  const [pending, setPending] = useState<"generate" | "apply" | null>(null);
+  const [pending, setPending] = useState<"generate" | "apply" | "models" | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const canSend = provider === "claude" || Boolean(catalog && model);
+
+  function changeProvider(value: AIProvider) {
+    setSelectedProvider(value); setSuggestion(null); setError(""); setNotice("");
+    try { localStorage.setItem(providerKey, value); } catch { /* Selection still works in memory. */ }
+  }
+
+  async function loadModels() {
+    setPending("models"); setError(""); setNotice("");
+    try {
+      const result = await ai.models();
+      setCatalog(result);
+      setModel(result.models.includes(model) ? model : result.default_model ?? "");
+    } catch (failure) {
+      setCatalog(null); setModel("");
+      setError(failure instanceof ApiError ? `${failure.code}: ${failure.message}` : message(failure));
+    } finally { setPending(null); }
+  }
 
   async function generate(kind: Suggestion["kind"]) {
     setPending("generate"); setSuggestion(null); setError(""); setNotice("");
     try {
+      const selection = { provider, model: provider === "opencode" ? model : undefined };
       if (kind === "script") {
-        const result = await ai.script(script);
+        const result = await ai.script(script, selection);
         setSuggestion({ kind, text: result.text });
       } else {
-        const result = await ai.subtitles(srt, mode);
+        const result = await ai.subtitles(srt, mode, selection);
         setSuggestion({ kind, text: result.srt, cues: result.cues });
       }
     } catch (failure) {
@@ -51,14 +85,40 @@ export function AIAssistant({ plan, editorBusy, applyPlan, applySubtitles }: {
   }
 
   return <section className={panel} aria-labelledby="ai-editor-heading">
-    <h2 id="ai-editor-heading" className="font-display text-lg font-semibold">Asistente de texto · Claude Code</h2>
-    <p className="text-sm text-muted-foreground">Cada botón de envío comparte solo el texto de su campo con Anthropic. No pegues rutas, credenciales ni contenido de archivos .env.</p>
+    <h2 id="ai-editor-heading" className="font-display text-lg font-semibold">Asistente de texto</h2>
+    <div className="flex flex-wrap items-end gap-3">
+      <label className="grid gap-1 text-sm">Proveedor de IA
+        <select className={field} value={provider} disabled={Boolean(pending)}
+          onChange={(event) => changeProvider(event.target.value as AIProvider)}>
+          <option value="claude">Claude Code</option>
+          <option value="opencode">OpenCode</option>
+        </select>
+      </label>
+      {provider === "opencode" && <>
+        <Button type="button" variant="outline" disabled={Boolean(pending)} onClick={() => void loadModels()}>
+          {catalog ? "Actualizar modelos" : "Cargar modelos"}
+        </Button>
+        {catalog && <label className="grid max-w-full gap-1 text-sm">Modelo de OpenCode
+          <select className={`${field} max-w-full`} value={model} disabled={Boolean(pending)}
+            onChange={(event) => { setModel(event.target.value); setSuggestion(null); setError(""); setNotice(""); }}>
+            <option value="" disabled>Elige un modelo</option>
+            {catalog.models.map((id) => <option key={id} value={id}>{id}</option>)}
+          </select>
+        </label>}
+      </>}
+    </div>
+    <p className="text-sm text-muted-foreground">
+      {provider === "claude" ? "Cada envío comparte el texto de su campo con Anthropic." :
+        "Cada envío comparte el texto de su campo con el servicio del modelo elegido a través de OpenCode local."}
+      {" "}No pegues rutas, credenciales ni contenido de archivos .env.
+      {provider === "opencode" && !catalog && " Carga los modelos para elegir uno y habilitar el envío."}
+    </p>
     <div className="grid gap-4 lg:grid-cols-2">
       <div className="min-w-0 space-y-2">
         <label htmlFor="ai-script" className="block text-sm">Texto de guion</label>
         <textarea id="ai-script" className={`${field} w-full`} rows={5} value={script} maxLength={12000} disabled={Boolean(pending)}
           onChange={(event) => { setScript(event.target.value); if (suggestion?.kind === "script") setSuggestion(null); }} />
-        <Button type="button" variant="outline" disabled={Boolean(pending) || !script.trim()} onClick={() => void generate("script")}>Enviar guion y sugerir estructura</Button>
+        <Button type="button" variant="outline" disabled={!canSend || Boolean(pending) || !script.trim()} onClick={() => void generate("script")}>Enviar guion y sugerir estructura</Button>
       </div>
       <div className="min-w-0 space-y-2">
         <label htmlFor="ai-srt" className="block text-sm">Subtítulos o transcripción temporizada (SRT)</label>
@@ -70,11 +130,11 @@ export function AIAssistant({ plan, editorBusy, applyPlan, applySubtitles }: {
             <option value="correct">Corregir SRT</option>
             <option value="generate">Generar desde SRT</option>
           </select>
-          <Button type="button" variant="outline" disabled={Boolean(pending) || !srt.trim()} onClick={() => void generate("subtitles")}>Enviar SRT y sugerir subtítulos</Button>
+          <Button type="button" variant="outline" disabled={!canSend || Boolean(pending) || !srt.trim()} onClick={() => void generate("subtitles")}>Enviar SRT y sugerir subtítulos</Button>
         </div>
       </div>
     </div>
-    {(pending || notice) && <p role="status" className="text-sm text-muted-foreground">{pending === "generate" ? "Esperando a Claude…" : pending === "apply" ? "Aplicando…" : notice}</p>}
+    {(pending || notice) && <p role="status" className="text-sm text-muted-foreground">{pending === "generate" ? `Esperando a ${aiProviders[provider]}…` : pending === "apply" ? "Aplicando…" : pending === "models" ? "Cargando modelos…" : notice}</p>}
     {error && <Problem>{error}</Problem>}
     {suggestion && <div className="space-y-2 rounded-lg border border-white/10 p-3">
       <h3 className="text-sm font-semibold">Vista previa · {suggestion.kind === "script" ? "plan de guion" : "subtítulos"}</h3>

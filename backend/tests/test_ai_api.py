@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.api.routes import ai
+from app.ai.errors import AIServerUnavailable
 from app.core.db import get_session
 from app.editing.subtitles import parse_srt
 from app.main import app
@@ -39,7 +40,7 @@ def test_no_implicit_or_nonlocal_calls(studio, monkeypatch):
 
 @pytest.mark.parametrize("text", [r'C:\Users\Someone\secret.txt', "/home/someone/secret.txt",
                                   r"\\host\share", r"C:/local/hidden", "INTERNAL_KEY=private",
-                                  "Bearer abcdefghijk", "sk-ant-testing-000"])
+                                  "Bearer abcdefghijk", "sk-ant-testing-000", "Lee `.env.local`"])
 def test_sensitive_inputs_never_reach_provider(studio, monkeypatch, text):
     client, engine = studio
     # The provider factory may be built while evaluating the expression, but
@@ -109,3 +110,66 @@ def test_generated_cues_may_split_but_not_leave_source_interval():
     assert ai._keeps_timing(original, split, "generate")
     assert not ai._keeps_timing(original, split, "correct")
     assert not ai._keeps_timing(original, parse_srt(SRT.replace("01,321", "02,000")), "generate")
+
+
+def test_provider_status_reports_independent_outcomes(studio, monkeypatch):
+    client, engine = studio
+    calls = []
+
+    class Claude:
+        def check_status(self):
+            calls.append("claude")
+            return {"ready": True, "tools_disabled": True}
+
+    class OpenCode:
+        def check_status(self):
+            calls.append("opencode")
+            raise AIServerUnavailable("Servidor apagado.")
+
+    monkeypatch.setattr(ai, "_provider", Claude)
+    monkeypatch.setattr(ai, "_opencode", lambda model=None: OpenCode())
+    assert client.get("/api/ai/status?provider=opencode").status_code == 403
+    assert client.get("/api/ai/models").status_code == 403
+    assert calls == []
+    assert list(client.get("/api/ai/status?provider=opencode", headers=CONFIRM).json()["providers"]) == ["opencode"]
+    assert calls == ["opencode"]
+    statuses = client.get("/api/ai/status", headers=CONFIRM).json()["providers"]
+    assert statuses == {"claude": {"ready": True, "tools_disabled": True}, "opencode": {
+        "ready": False, "code": "AI_SERVER_UNAVAILABLE", "message": "Servidor apagado."}}
+    with Session(engine) as session:
+        rows = session.exec(select(AuditLog)).all()
+        assert [(r.plugin_id, r.status, r.detail) for r in rows[-4:]] == [
+            ("claude-ai", "started", ""), ("claude-ai", "ok", ""),
+            ("opencode-ai", "started", ""), ("opencode-ai", "error", "AI_SERVER_UNAVAILABLE")]
+
+
+def test_closed_provider_selection_and_no_prompt_auditing(studio, monkeypatch):
+    client, engine = studio
+    selected = []
+    monkeypatch.setattr(ai, "_provider", lambda: pytest.fail("No fallback to Claude"))
+
+    class OpenCode:
+        def __init__(self, model=None):
+            selected.append(model)
+
+        def generate_text(self, prompt, system):
+            return prompt
+
+        def list_models(self):
+            return {"models": ["fixture/chat"], "default_model": "fixture/chat"}
+
+    monkeypatch.setattr(ai, "_opencode", OpenCode)
+    assert client.get("/api/ai/models", headers=CONFIRM).json()["models"] == ["fixture/chat"]
+    payload = {"confirmed": True, "model": "fixture/chat", "text": "texto de prueba"}
+    for url, extras in (("script", {}), ("subtitles", {"mode": "correct", "text": SRT})):
+        endpoint = f"/api/ai/{url}"
+        assert client.post(endpoint, headers=CONFIRM, json={**payload, **extras, "provider": "unknown"}).status_code == 422
+        assert client.post(endpoint, headers=CONFIRM, json={**payload, **extras, "provider": "opencode"}).status_code == 200
+    assert client.post("/api/ai/script", headers=CONFIRM, json={**payload, "provider": "opencode",
+                       "text": "Password: hidden"}).json()["error"]["code"] == "AI_SENSITIVE_INPUT"
+    assert selected == [None, "fixture/chat", "fixture/chat"]
+    with Session(engine) as session:
+        rows = session.exec(select(AuditLog)).all()
+        assert len(rows) == 8
+        assert {r.plugin_id for r in rows} == {"opencode-ai"}
+        assert {r.detail for r in rows} == {"", "AI_SENSITIVE_INPUT"}
