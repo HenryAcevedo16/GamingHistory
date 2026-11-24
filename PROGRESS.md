@@ -1,7 +1,8 @@
 # PROGRESS — Gaming History Studio
 
 Bitácora operativa del repositorio. Describe lo que existe y lo que se verificó,
-no lo que se planea. Última actualización: **2026-11-23** (cierre de Fase 3).
+no lo que se planea. Última actualización: **2026-11-23** (Fase 5 diagnosticada y bloqueada;
+cierre de Fase 3).
 
 ## 1. Estado actual
 
@@ -11,7 +12,7 @@ no lo que se planea. Última actualización: **2026-11-23** (cierre de Fase 3).
 | 2 | Interfaz `EditorAdapter`, timeline unificado y `EditingRouter` | **Completada y verificada** |
 | 3 | Integración FFmpeg completa y verificada con una operación real | **Completada y verificada** |
 | 4 | Integración VectCutAPI/CapCut verificada | Pendiente (sin código) |
-| 5 | Integración DaVinci Resolve verificada | Pendiente (sin código) |
+| 5 | Integración DaVinci Resolve verificada | **Bloqueada** (Resolve 21.0.4 Free: scripting externo solo en Studio) |
 | 6 | Integración Descript opcional | Pendiente (sin código) |
 | 7 | Editor visual integrado con la timeline | Pendiente (sin código) |
 | 8 | Sincronización con Google Drive | Pendiente (sin código) |
@@ -29,6 +30,9 @@ Notas de alcance:
 - La Fase 1 quedó commiteada como `06b4c68` (`Fase 1: Plugin Manager, manifiestos y pantalla
   Extensiones`); la Fase 2, como `49243a7` (`Fase 2: adaptadores, timeline y enrutador`). La
   Fase 3 se cierra con el commit de este cierre.
+- La Fase 5 (DaVinci Resolve) quedó **bloqueada**: Resolve 21.0.4 Free rechaza el canal de
+  scripting externo (`scriptapp("Resolve")` → `None`) y esa preferencia es exclusiva de
+  Studio. La Fase 4 sigue pendiente por falta de instalación y no se tocó.
 
 ## 2. Cómo ejecutar (Windows / PowerShell)
 
@@ -508,3 +512,67 @@ las fases anteriores.
   - Fase 4: integración VectCutAPI/CapCut verificada, sin reutilizar el adaptador FFmpeg ni
     tocar el núcleo. Deuda técnica: progreso incremental real y recuperación de jobs
     interrumpidos.
+
+## Fase 5 — Integración DaVinci Resolve (2026-11-23)
+
+- **Estado:** bloqueada
+- **Commit de cierre:** sin commit de código; solo se documenta el bloqueo
+- **Implementado:**
+  - Diagnóstico real previo, sin adaptador. No se escribió `resolve.py` ni se modificaron
+    Plugin Manager, router, frontend o pruebas, porque el gate de la fase no se cumplió.
+- **Probado realmente (comando → resultado):**
+  - `Get-Process -Name Resolve` → Resolve abierto, PID 6392, inicio 23/11/2026 20:18:26;
+    ventana `DaVinci Resolve - Crear proyecto 1`.
+  - `(Get-Item Resolve.exe).VersionInfo` → `FileVersion=21.0.4.5`, `ProductVersion=21.0.4.5`,
+    `ProductName=DaVinci Resolve`.
+  - Registro de desinstalación → `DisplayName=DaVinci Resolve`, `DisplayVersion=21.0.40005`,
+    sin "Studio".
+  - Instalación → única entrada `Blackmagic Proxy Generator Lite.lnk` (edición Free), que
+    apunta a `Resolve.exe -pg`; no existe la variante completa de Studio.
+  - API oficial localizada en
+    `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Developer\Scripting`
+    (`README.txt` actualizado 24/07/2026 y `Modules/DaVinciResolveScript.py`).
+  - Con `RESOLVE_SCRIPT_API`, `RESOLVE_SCRIPT_LIB` y `PYTHONPATH` apuntando a esa instalación,
+    Python 3.14.3 importa `DaVinciResolveScript`, pero `scriptapp("Resolve")` → `None`
+    (sin objeto Resolve).
+  - Python 3.12 sobre el mismo módulo termina con `0xC0000005` (`-1073741819`), descartado por
+    incompatibilidad; no se usó para el diagnóstico.
+  - El README empaquetado describe la API como "for DaVinci Resolve Studio" y la preferencia
+    "External scripting using" como permiso configurable; en Free no entrega el objeto a un
+    proceso externo. No se localizó clave de scripting en `config.dat` ni `config.user.xml`.
+  - Resumen de la API según el README: desde fuera de Resolve se puede gobernar la app abierta
+    (ProjectManager, proyectos, MediaPool, timelines, render, Fusion/Fairlight y ajustes) si
+    hay Studio con scripting externo en Local/Network. En Free 21.0.4 no hay acceso externo;
+    la API cubre un superconjunto común, pero el permiso y varias funciones son de Studio.
+  - Conclusión: no hay canal externo vivo; no se creó adaptador ni se simuló ninguna
+    operación.
+- **No probado / limitaciones:**
+  - No existe `backend/app/editing/adapters/resolve.py`, ni capacidades Free/Studio, ni
+    conversor Unified → Resolve, ni ajustes de Plugin Manager/router/UI, ni pruebas pytest de
+    Resolve.
+  - No se creó proyecto, no se importó clip y no se creó timeline en Resolve: la API externa
+    rechaza el proceso, así que no hay operación real que verificar.
+  - No se usó el puente in-app de la edición Free ni el MCP de terceros. `davinci-resolve-mcp-main/`
+    queda sin trackear, sin modificar y sin commit; su licencia es MIT y solo se consultó su
+    documentación para contrastar el bloqueo. El puente in-app no es scripting externo y
+    quedaría fuera del alcance de esta fase.
+  - La preferencia "External scripting using" de Resolve está marcada como exclusiva de Studio;
+    cambiarla en Free no habilitaría el canal.
+- **Notas de entorno y estado:**
+  - Resolve 21.0.4 Free (build 21.0.40005) en
+    `C:\Program Files\Blackmagic Design\DaVinci Resolve`; abierto durante todo el diagnóstico.
+  - Variables `RESOLVE_SCRIPT_*` no definidas a nivel de usuario: se pasaron de forma efímera en
+    los comandos de prueba.
+  - Backend y frontend sin cambios respecto al cierre de Fase 3; FFmpeg conserva sus cinco
+    capacidades verificadas.
+  - `GET /api/plugins` sigue mostrando `davinci-resolve` como `install_status=not_installed`
+    porque la detección del manifiesto es manual (diagnóstico) y no se ejecutó; no se ajustó
+    nada en una fase bloqueada.
+- **Próximo paso (para desbloquear):**
+  - Instalar/licenciar DaVinci Resolve **Studio**, activar Preferencias → Sistema → General →
+    "External scripting using" = **Local** (o Network solo si se necesita), reiniciar Resolve y
+    repetir el diagnóstico hasta obtener `scriptapp("Resolve") != None`.
+  - Con el canal vivo, implementar el adaptador y la verificación real (crear proyecto,
+    importar media, crear timeline y leer el estado desde Resolve).
+  - Mientras siga la edición Free, la Fase 5 no puede completarse. La Fase 4 (CapCut/VectCutAPI)
+    sigue pendiente por falta de instalación y no se tocó.
